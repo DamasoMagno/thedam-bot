@@ -1,3 +1,5 @@
+import { GENERAL_CHANNEL_ID } from '../config/constants.ts';
+import type { ChatMessage } from '../chat/types.ts';
 import type {
   Client,
   Interaction,
@@ -174,14 +176,63 @@ export function createMusicCommands({
         if (name === 'ajuda')
           return await interaction.editReply(
             messagePayload(
-              '**TheDam**\n`/dam tocar` nome ou link · `/dam painel` controles para o grupo\n`/dam playlists` listas por gênero · `/dam salvar-fila` guarda a fila\n`/dam favoritas` · `/dam recentes` · `/dam remover-musica`\n`/dam conversa` configura o Markov (administradores) · `/dam diagnostico`',
+              '**TheDam**\n`/dam tocar` nome ou link · `/dam painel` controles para o grupo\n`/dam playlists` listas por gênero · `/dam salvar-fila` guarda a fila\n`/dam favoritas` · `/dam recentes` · `/dam remover-musica`\n`/dam frase` · `/dam perolas` · `/dam perola-da-semana`\n`/dam conversa` configura o Markov (administradores) · `/dam diagnostico`',
             ),
           );
+        if (['frase', 'perolas', 'perola-da-semana', 'quote'].includes(name)) {
+          if (interaction.channelId !== GENERAL_CHANNEL_ID)
+            throw new MusicError(
+              403,
+              'Use os comandos de conversa no geral do Amigos.',
+            );
+          const controller = chat();
+          if (!controller)
+            throw new MusicError(503, 'Conversa indisponível. Veja /dam diagnostico.');
+          if (name === 'perolas') {
+            const entries = controller.pearls();
+            return await interaction.editReply(
+              messagePayload(
+                entries.length
+                  ? 'Escolha uma pérola para publicar no geral.'
+                  : 'Ainda não há pérolas. Reaja com 👍 às frases do bot.',
+                selection(
+                  'quote',
+                  'Escolher pérola',
+                  entries.map((entry) => ({ label: entry.text, value: entry.id })),
+                ),
+              ),
+            );
+          }
+          const content =
+            name === 'frase'
+              ? slash.options.getString('palavra') || ''
+              : name === 'perola-da-semana'
+                ? controller.weeklyPearl()?.text
+                : controller.pearls().find((entry) => entry.id === value)?.text;
+          if (content === undefined || content === null)
+            throw new MusicError(
+              404,
+              'Ainda não há uma pérola com avaliações nesta semana.',
+            );
+          const message = {
+            id: '',
+            guildId: guild,
+            channelId: interaction.channelId!,
+            content,
+            author: { id: user },
+            channel: interaction.channel,
+          } as ChatMessage;
+          if (name === 'frase') await controller.requestPhrase(message, content);
+          else await controller.requestQuote(message, content);
+          return await interaction.editReply(
+            messagePayload('Vou publicar a resposta no geral.'),
+          );
+        }
         if (name === 'status') {
           const status = await service.run(guild, user, 'status');
           return await interaction.editReply(
             messagePayload(
-              `**Estado do TheDam**\nDiscord: ${client.isReady?.() ? 'conectado' : 'reconectando'}\nComandos: ${status.commands === false ? 'indisponíveis' : 'disponíveis'}\nSpotify: ${status.spotify ? 'configurado' : 'não configurado'}\nMarkov: ${modeNames[chat()?.status().mode || ''] || status.markovReason || 'desativado'}\n${status.audioError ? 'Última falha: ' + status.audioError : 'Sem falha de áudio registrada.'}`,
+              `**Estado do TheDam**\nDiscord: ${client.isReady?.() ? 'conectado' : 'reconectando'}\nComandos: ${status.commands === false ? 'indisponíveis' : 'disponíveis'}\nSpotify: ${status.spotify ? 'configurado' : 'não configurado'}\nMarkov: ${modeNames[chat()?.status().mode || ''] || status.markovReason || 'desativado'}\nIA: ${chat()?.status().ai?.status || 'desativada'}\n${status.audioError ? 'Última falha: ' + status.audioError : 'Sem falha de áudio registrada.'}`,
             ),
           );
         }

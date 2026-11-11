@@ -6,6 +6,17 @@ export function configuration(env = process.env) {
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('PORT inválida.');
   return {
+    mediaChance: Math.max(0, Math.min(1, Number(env.MARKOV_MEDIA_CHANCE || 0.25) || 0)),
+    openaiKey: env.OPENAI_API_KEY || '',
+    openaiModel: env.OPENAI_MODEL || 'gpt-6-luna',
+    openaiChance: Math.max(
+      0,
+      Math.min(1, Number(env.OPENAI_REPLY_CHANCE || 0.15) || 0),
+    ),
+    openaiDailyLimit: Math.max(
+      0,
+      Math.min(200, Number(env.OPENAI_DAILY_LIMIT || 30) || 0),
+    ),
     markovEnabled: env.MARKOV_ENABLED === 'true',
     markovChannel: env.MARKOV_CHANNEL_ID || '',
     musicPath: env.MUSIC_DB_PATH || '/app/data/music.sqlite',

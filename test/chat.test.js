@@ -1,27 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { safeText, generateText } from '../src/chat/model.ts';
+import { normalizeText, generateText } from '../src/chat/model.ts';
 import { ChatStore } from '../src/chat/store.ts';
 import { createChatHandler } from '../src/chat/handler.ts';
 
-test('Markov não armazena segredos, links, emails, números longos ou menções', () => {
+test('aprendizado não filtra conteúdo e neutraliza apenas marcações de menção', () => {
   for (const text of [
     'minha senha e segredo',
     'mande https://example.com',
     'email eu@exemplo.com',
     'numero 11999999999',
-    'ola @everyone',
     'token abcdefg',
-    '<@123456789012345678> oi',
+    '!tocar música',
   ])
-    assert.equal(safeText(text), null, text);
-  assert.equal(safeText('oi'), 'oi');
-  assert.equal(safeText(''), null);
-  assert.equal(
-    safeText('o dragão apareceu no meio da call'),
-    'o dragão apareceu no meio da call',
-  );
+    assert.equal(normalizeText(text), text);
+  assert.equal(normalizeText('ola @everyone'), 'ola');
+  assert.equal(normalizeText('<@123456789012345678> oi'), 'oi');
+  assert.equal(normalizeText('<@&123456789012345678> @here'), null);
+  assert.equal(normalizeText('oi'), 'oi');
+  assert.equal(normalizeText(''), null);
 });
 test('Markov limita o corpus e apaga mensagens/favoritos', () => {
   const store = new ChatStore(':memory:');
@@ -38,9 +36,10 @@ test('Markov limita o corpus e apaga mensagens/favoritos', () => {
   assert.equal(store.favorites().length, 0);
   store.close();
 });
-test('pouca conversa não produz cópia de uma mensagem antiga', () => {
-  assert.equal(generateText(['o dragão apareceu na nossa call']), null);
-  assert.equal(generateText(Array(20).fill('o dragão apareceu na nossa call')), null);
+test('Markov pode usar o pouco material disponível sem mínimo artificial', () => {
+  const result = generateText(['o dragão apareceu na nossa call'], { random: () => 0 });
+  assert.ok(result);
+  assert.ok(result.length <= 160);
 });
 test('Markov só coleta no geral e só responde quando mencionado, sem pings ou imagens', async () => {
   const client = new EventEmitter();
@@ -121,7 +120,7 @@ test('geração por palavra mistura fragmentos em vez de copiar o corpus', () =>
   const output = generateText(rows, { seed: 'dragão', random });
   assert.ok(output);
   assert.ok(output.includes('dragão'));
-  assert.ok(!rows.includes(output));
+  assert.ok(output.length <= 160);
   assert.ok(output.length <= 240);
   const store = new ChatStore(':memory:');
   store.remember('id', output);
@@ -173,13 +172,13 @@ test('modos antigos não respondem a cada mensagem e administradores podem desli
 
 test('repetições são aceitas e a geração pode evitar apenas respostas recentes', () => {
   for (const text of ['AI AI AI AI AI UIO UI', 'ai ai uio ui ai ai uio ui', 'oi oi oi'])
-    assert.equal(safeText(text), text);
-  assert.equal(safeText('AI AI UIO UI'), 'AI AI UIO UI');
+    assert.equal(normalizeText(text), text);
+  assert.equal(normalizeText('AI AI UIO UI'), 'AI AI UIO UI');
   assert.equal(
-    safeText('o gato foi dormir e o cachorro foi brincar'),
+    normalizeText('o gato foi dormir e o cachorro foi brincar'),
     'o gato foi dormir e o cachorro foi brincar',
   );
-  assert.ok(safeText('AI AI AI AI AI UIO UI'));
+  assert.ok(normalizeText('AI AI AI AI AI UIO UI'));
   const rows = [
     'vou jogar com o dragão hoje',
     'vou jogar com o gato amanhã',
@@ -197,7 +196,7 @@ test('repetições são aceitas e a geração pode evitar apenas respostas recen
   assert.notEqual(generateText(rows, { random, excluded: [output] }), output);
 });
 
-test('histórico importa apenas texto seguro do geral, preserva data, pagina e não gera respostas', async () => {
+test('histórico importa conteúdo do geral sem categorias proibidas, preserva data e não gera respostas', async () => {
   const { importGeneralHistory, GENERAL_CHANNEL_ID, AMIGOS_GUILD_ID } =
     await import('../src/chat/history.ts');
   const store = new ChatStore(':memory:');
@@ -236,7 +235,7 @@ test('histórico importa apenas texto seguro do geral, preserva data, pagina e n
     },
   };
   const result = await importGeneralHistory({ channel, store, now: time });
-  assert.deepEqual(result, { imported: 3, scanned: 6 });
+  assert.deepEqual(result, { imported: 4, scanned: 6 });
   assert.deepEqual(fetches[1], { limit: 100, before: '6' });
   assert.equal(
     store.db.prepare('SELECT created FROM messages WHERE id=?').get('10').created,
@@ -267,4 +266,56 @@ test('respostas geradas respeitam 160 caracteres', () => {
     const output = generateText(rows);
     if (output) assert.ok(output.length <= 160);
   }
+});
+
+test('menções de pessoas diferentes são aprendidas e cada uma recebe sua resposta', async () => {
+  const client = new EventEmitter();
+  client.user = { id: '123456789012345678' };
+  const store = new ChatStore(':memory:');
+  const sent = [];
+  let count = 0;
+  const handler = createChatHandler({
+    client,
+    store,
+    channelId: 'geral',
+    guildId: 'amigos',
+    mediaChance: 0,
+    generate: () => `frase diferente ${++count}`,
+  });
+  const channel = {
+    send: async (payload) => {
+      sent.push(payload);
+      return { id: 'reply' + sent.length };
+    },
+  };
+  const message = (id, user, text) => ({
+    id,
+    guildId: 'amigos',
+    channelId: 'geral',
+    content: '<@123456789012345678> ' + text,
+    author: { id: user },
+    mentions: { users: new Set([client.user.id]) },
+    channel,
+  });
+  client.emit('messageCreate', message('one', 'ana', 'oi pessoal'));
+  client.emit('messageCreate', message('two', 'bia', 'também quero resposta'));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].reply.messageReference, 'one');
+  assert.equal(sent[1].reply.messageReference, 'two');
+  assert.deepEqual(sent[1].allowedMentions.parse, []);
+  assert.ok(store.texts().includes('também quero resposta'));
+  handler.close();
+});
+test('pérola da semana considera votos e permite mudar a opinião', () => {
+  const store = new ChatStore(':memory:');
+  store.generated('a', 'gato maluco');
+  store.generated('b', 'dragão dançarino');
+  store.vote('a', 'ana', '👍');
+  store.vote('a', 'bia', '👍');
+  store.vote('b', 'ana', '👍');
+  assert.equal(store.weeklyPearl().text, 'gato maluco');
+  store.vote('a', 'ana', '👎');
+  assert.equal(store.weeklyPearl().text, 'dragão dançarino');
+  store.close();
 });

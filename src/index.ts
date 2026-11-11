@@ -1,3 +1,5 @@
+import { AiReplyService } from './ai/reply-service.ts';
+import { createGeneratedMusicActions } from './chat/music-actions.ts';
 import { LibraryRepository } from './music/library-repository.ts';
 import { checkMessageContentAccess } from './discord/intent-access.ts';
 import { GENERAL_CHANNEL_ID, AMIGOS_GUILD_ID } from './config/constants.ts';
@@ -59,13 +61,27 @@ try {
       'Não foi possível registrar os comandos de música. Confira o escopo applications.commands.',
     );
   }
-  if (config.markovEnabled)
+  if (config.markovEnabled) {
+    const store = new ChatStore(config.markovPath);
+    const ai = new AiReplyService(
+      {
+        key: config.openaiKey,
+        model: config.openaiModel,
+        chance: config.openaiChance,
+        dailyLimit: config.openaiDailyLimit,
+      },
+      store,
+    );
     chat = createChatHandler({
+      ai,
+      mediaChance: config.mediaChance,
+      onGenerated: createGeneratedMusicActions(service),
       client: gateway.client,
-      store: new ChatStore(config.markovPath),
+      store,
       channelId: config.markovChannel,
       guildId: AMIGOS_GUILD_ID,
     });
+  }
   server.listen(config.port, config.host, () => console.log('Bot de música pronto.'));
 } catch {
   console.error(

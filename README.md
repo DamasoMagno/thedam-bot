@@ -65,44 +65,72 @@ observadas no cliente padrão. A preparação do áudio depende da rede e da fon
 metadados: o áudio é buscado no YouTube, e a versão pode diferir. Sem credenciais,
 YouTube funciona normalmente. Playlists próprias não dependem do Spotify.
 
-## Markov: livre, curto e sem spam
+## Markov e IA ocasional
 
-Mistura trechos das mensagens do geral, sem LLM, GPU ou API de IA. Combinações repetitivas
-ou sem sentido são permitidas. Não exige quantidade mínima de mensagens para tentar
-responder; sem combinações novas, pode avisar que ainda está aprendendo por menção.
+Aprende com os textos do geral, **incluindo mensagens que mencionam o TheDam**.
+O conteúdo não é filtrado por assunto: links, gírias, comandos e frases repetitivas
+podem entrar no corpus. Marcações de pessoas/cargos/everyone/here são neutralizadas.
+Todas as respostas bloqueiam notificações. Não processa áudio nem aprende com bots.
 
-- `@TheDam palavra`: tenta gerar uma frase com essa palavra.
-- `@TheDam ajuda`, `@TheDam pérolas`, `@TheDam frequentes`.
-- 👍 guarda uma resposta; 👎 rejeita. É possível trocar a reação.
-- `/dam conversa`: configuração por administradores com Gerenciar Servidor.
+O gerador é uma cadeia de Markov de primeira ordem por padrão: combina palavras
+considerando as transições aprendidas e suas frequências. Une contextos com diferenças
+de maiúsculas/pontuação e pode começar em trechos variados. `caos off` usa duas palavras
+de contexto para mais coerência. Respostas têm até **160 caracteres e 24 palavras**.
+Não exige mínimo de mensagens para tentar gerar; pode reaproveitar frases aprendidas.
 
-Modos: **Só por menção** (padrão em instalação nova), **Discreto** e **Mais participativo**.
-Os modos espontâneos não respondem a cada mensagem:
+- **Menções:** cada pessoa recebe sua resposta em uma fila, com **1 segundo** entre
+  respostas. Cada pessoa mantém só um pedido pendente (o mais recente), evitando
+  acúmulo ao repetir a menção. O bot referencia a mensagem respondida sem notificar.
+- **Espontâneo:** duas pessoas conversando já podem ativar uma resposta agendada.
+  Uma pessoa sozinha também ativa após oito mensagens em três minutos (seis no modo
+  participativo). A espera é sorteada: 2–5 minutos no discreto, 2–3 no participativo.
+  Existe só um envio pendente; se não houver mensagem humana no último minuto ou a
+  conversa esfriar, ele é cancelado. Menções cancelam o envio automático pendente.
+- **GIFs:** em aproximadamente 25% das respostas, no máximo um junto da mensagem,
+  sem temporizadores ou mensagens extras. `MARKOV_MEDIA_CHANCE=0` desliga.
 
-1. O discreto identifica pelo menos seis mensagens de duas pessoas em três minutos.
-   O participativo usa quatro mensagens de duas pessoas.
-2. Agenda **uma única resposta** com espera sorteada a partir da mensagem que ativou
-   a condição: 2–5 minutos no discreto; 2–3 minutos no participativo.
-3. Antes de falar, confere a atividade. Se não houver mensagem humana válida no último
-   minuto, o chat não estiver mais movimentado ou o modo foi desligado, cancela.
-4. Menções cancelam o envio pendente; há intervalo mínimo entre falas espontâneas.
-   O bot não mantém sua própria atividade e não agenda vários envios para um mesmo pico.
+Comandos no geral:
 
-Respostas geradas têm até **160 caracteres** e até 24 palavras. Regras de segurança
-continuam: ignora bots, mensagens vazias, links, menções e padrões comuns de segredos.
-O filtro não identifica todo conteúdo sensível. Todas as respostas bloqueiam pings
-para everyone, here, cargos e pessoas.
+- `@TheDam palavra` ou `/dam frase palavra:dragão`: gera uma frase para o grupo.
+- `/dam perolas`: menu das favoritas; `/dam perola-da-semana`: melhor saldo de votos
+  dos últimos sete dias, sob comando, sem publicação automática.
+- 👍 guarda uma resposta; 👎 rejeita. Troca e remoção de voto atualizam o placar.
+- `@TheDam frequentes`: mostra nomes recorrentes sem pings.
+- `/dam conversa`: modos Só por menção, Discreto, Mais participativo e caos.
+  Configurações exigem Gerenciar Servidor.
+- `@TheDam esquecer`: administrador apaga aprendizado, favoritas e preferências.
 
-Os comandos antigos `@TheDam automatico on/sempre/temporizador` ativam participação
-por atividade; `automatico off` deixa somente menções. `caos on/off` muda a combinação
-para palavras mais imprevisíveis. `esquecer` apaga aprendizado, favoritos e configurações.
+Com `OPENAI_API_KEY` configurada, **15% das oportunidades de resposta** podem usar IA
+para comentários ou perguntas curtas, engraçadas e irreverentes. A IA não cria uma
+nova oportunidade de envio: usa a mesma fila e o mesmo controle de atividade.
+Envia apenas a mensagem de contexto (até 500 caracteres), sem importar o histórico
+inteiro à API. Usa Responses API com `store:false`, até 100 tokens de saída, timeout
+curto e até **30 tentativas/dia**, contadas no SQLite mesmo após reiniciar. Pode haver
+retenção operacional pelo provedor conforme a política da conta. Saldo, permissões
+ou rede indisponíveis fazem voltar ao Markov, com espera antes de tentar a API de novo.
 
-SQLite guarda até 2.000 mensagens válidas, descarta textos com mais de 30 dias e limita
-favoritas/rejeitadas a 100. A limpeza ocorre na abertura e nas leituras/aprendizado.
-Edições e exclusões recebidas, inclusive exclusão em lote, atualizam o corpus.
-O histórico não é reimportado a cada reinício. A função de manutenção
-`chat/history.ts` permite importar até 2.000 mensagens válidas dos últimos 30 dias,
-exclusivamente do geral. Favoritos antigos não mantêm reações ligadas após reiniciar.
+```dotenv
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-6-luna
+OPENAI_REPLY_CHANCE=0.15
+OPENAI_DAILY_LIMIT=30
+MARKOV_MEDIA_CHANCE=0.25
+```
+
+A chave é privada e requer saldo/créditos na API. Sem chave, não há chamadas de IA.
+`/dam diagnostico` informa o estado. O limite de chamadas não é um teto financeiro
+fornecido pela OpenAI; configure também o orçamento do projeto no painel da API.
+
+Se uma frase gerada começar com `/tocar`, `/dam tocar`, `!tocar` ou `!play`, o bot
+pode adicionar a faixa diretamente à sua própria fila. Usa a identidade da pessoa que
+provocou a resposta, exige a call correta e aceita só tocar (nunca executar código ou
+comandos destrutivos). Limite: uma ação musical gerada a cada dez minutos. Isso não
+aciona Jockie nem outros bots. Mensagens de erro dessa brincadeira não são repetidas.
+
+SQLite mantém até 2.000 mensagens por 30 dias, favoritas e rejeitadas (100 cada),
+300 respostas geradas com votos e o contador diário da IA. Exclusões/edições recebidas,
+inclusive em lote, atualizam o corpus. O histórico não é reimportado ao reiniciar.
+A função `chat/history.ts` permite importar até 2.000 mensagens dos últimos 30 dias.
 
 ## Integração com o site
 
@@ -151,12 +179,13 @@ src/
     catalog.ts               Busca e resolução YouTube/Spotify
     audio-source.ts          yt-dlp → FFmpeg → Discord
     types.ts                 Contratos internos do módulo
-  chat/                      Geração, atividade, persistência, histórico e reações
+  chat/                      Markov, fila de menções, atividade, mídia, votos e dados
+  ai/                        OpenAI opcional, limite diário e fallback
   shared/                    Erros de domínio
 ```
 
 Entradas Discord e HTTP reutilizam `PlayerService`; SQL fica nos repositórios.
-Não há Redis, microserviços ou servidor de IA. As tabelas musicais são criadas em banco
+Não há Redis nem microserviços. A IA opcional usa API externa e não carrega modelos na VPS. As tabelas musicais são criadas em banco
 separado, sem alterar o banco existente de aprendizado.
 
 ```sh

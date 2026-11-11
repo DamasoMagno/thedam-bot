@@ -87,6 +87,11 @@ export const musicCommands: ChatInputApplicationCommandData[] = [
           ['Desativar', 'off'],
         ]),
       ]),
+      sub('frase', 'Gerar uma frase para o geral', [
+        text('palavra', 'Palavra para inspirar a frase', false, 40),
+      ]),
+      sub('perolas', 'Escolher uma frase favorita'),
+      sub('perola-da-semana', 'Ver a frase mais bem avaliada da semana'),
       sub('ajuda', 'Ver os comandos principais'),
     ],
   },

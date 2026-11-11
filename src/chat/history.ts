@@ -1,6 +1,6 @@
 import type { ChatMessage } from './types.ts';
 import type { ChatStore } from './store.ts';
-import { safeText } from './model.ts';
+import { normalizeText } from './model.ts';
 
 export const GENERAL_CHANNEL_ID = '1379585304029171805';
 export const AMIGOS_GUILD_ID = '1379585303295299714';
@@ -46,15 +46,8 @@ export async function importGeneralHistory({
         message.createdTimestamp! < cutoff
       )
         continue;
-      if (
-        message.author?.bot ||
-        message.webhookId ||
-        message.mentions?.users?.size ||
-        message.mentions?.roles?.size ||
-        message.mentions?.everyone
-      )
-        continue;
-      const text = safeText(message.content);
+      if (message.author?.bot || message.webhookId) continue;
+      const text = normalizeText(message.content);
       if (!text) continue;
       store.learn(message, text, message.createdTimestamp);
       imported++;

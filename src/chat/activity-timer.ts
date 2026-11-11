@@ -8,6 +8,7 @@ export interface ActivityOptions {
   cancel?: typeof clearTimeout;
   windowMs?: number;
   minMessages?: number;
+  soloMessages?: number;
   minAuthors?: number;
   minDelayMs?: number;
   maxDelayMs?: number;
@@ -23,7 +24,8 @@ export function createActivityTimer({
   schedule = setTimeout,
   cancel = clearTimeout,
   windowMs = 180000,
-  minMessages = 6,
+  minMessages = 2,
+  soloMessages = 8,
   minAuthors = 2,
   minDelayMs = 120000,
   maxDelayMs = 300000,
@@ -43,12 +45,14 @@ export function createActivityTimer({
   };
   const active = () => {
     prune();
-    return (
-      activity.length >=
-        (profile() === 'participative' ? Math.max(4, minMessages - 2) : minMessages) &&
-      new Set(activity.map((item) => item.author)).size >= minAuthors &&
-      now() - activity.at(-1)!.at <= quietMs
-    );
+    const people = new Set(activity.map((item) => item.author)).size;
+    const messagesNeeded =
+      people >= minAuthors
+        ? minMessages
+        : profile() === 'participative'
+          ? Math.max(6, soloMessages - 2)
+          : soloMessages;
+    return activity.length >= messagesNeeded && now() - activity.at(-1)!.at <= quietMs;
   };
   const clear = () => {
     if (timer !== undefined) cancel(timer);

@@ -39,7 +39,7 @@ function fixture(random = () => 0, speak) {
 }
 test('conversa precisa estar movimentada e só uma resposta fica agendada', async () => {
   const f = fixture();
-  f.activity(5);
+  f.timer.noteActivity('geral', 'ana');
   assert.equal(f.scheduled.length, 0);
   f.timer.noteActivity('geral', 'bia');
   assert.equal(f.scheduled.length, 1);
@@ -62,11 +62,12 @@ test('espera varia e silêncio cancela a resposta sem falar sozinho', async () =
   assert.equal(f.sent.length, 0);
   f.timer.close();
 });
-test('um único usuário não ativa espontaneidade e desligar cancela o envio', async () => {
+test('uma pessoa muito ativa também agenda, e desligar cancela o envio', async () => {
   const f = fixture();
-  for (let i = 0; i < 10; i++) f.timer.noteActivity('geral', 'ana');
+  for (let i = 0; i < 7; i++) f.timer.noteActivity('geral', 'ana');
   assert.equal(f.scheduled.length, 0);
-  f.activity();
+  f.timer.noteActivity('geral', 'ana');
+  assert.equal(f.scheduled.length, 1);
   f.disable();
   f.setTime(120000);
   await f.timer.tick();

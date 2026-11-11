@@ -3,9 +3,12 @@ export interface ChatChannel {
   send(payload: {
     content: string;
     allowedMentions: { parse: never[]; repliedUser: boolean };
+    embeds?: { image: { url: string } }[];
+    reply?: { messageReference: string; failIfNotExists: boolean };
   }): Promise<{ id: string }>;
 }
 export interface ChatMessage {
+  requestedQuote?: string;
   id: string;
   guildId: string | null;
   channelId: string;

@@ -1,9 +1,12 @@
+import { chooseReplyMedia } from './media.ts';
+import type { AiReplyService } from '../ai/reply-service.ts';
+import { createMentionQueue } from './mention-queue.ts';
 import type { Client } from 'discord.js';
 import type { ChatMessage, ChatReaction, ChatUser } from './types.ts';
 import type { ChatStore } from './store.ts';
 import type { ActivityOptions } from './activity-timer.ts';
 import { PermissionsBitField } from 'discord.js';
-import { safeText, generateText } from './model.ts';
+import { normalizeText, generateText } from './model.ts';
 import { createActivityTimer } from './activity-timer.ts';
 export function createChatHandler({
   client,
@@ -14,6 +17,9 @@ export function createChatHandler({
   now = Date.now,
   generate = generateText,
   activityOptions = {},
+  onGenerated,
+  ai,
+  mediaChance = 0.25,
 }: {
   client: Client;
   store: ChatStore;
@@ -23,9 +29,12 @@ export function createChatHandler({
   now?: () => number;
   generate?: typeof generateText;
   activityOptions?: Partial<ActivityOptions>;
+  mediaChance?: number;
+  ai?: AiReplyService;
+  onGenerated?: (text: string, message: ChatMessage) => Promise<unknown>;
 }) {
-  let lastReply = 0,
-    lastAuto = 0;
+  let lastReply = 0;
+  let lastSpeaker: ChatMessage | undefined;
   const recent = new Map<string, { text: string; at: number }>(),
     rejected = new Set(store.rejected()),
     voters = new Map<string, string>();
@@ -33,13 +42,38 @@ export function createChatHandler({
     message.guildId === guildId && message.channelId === channelId;
   const send = async (message: Pick<ChatMessage, 'channel'>, text: string) => {
     activityTimer.noteReply();
-    const reply = await message.channel.send({
+    const payload = {
+      embeds: chooseReplyMedia({ chance: mediaChance, random }),
       content: text,
-      allowedMentions: { parse: [], repliedUser: false },
-    });
+      allowedMentions: { parse: [] as never[], repliedUser: false },
+      ...('id' in message && typeof message.id === 'string' && message.id
+        ? { reply: { messageReference: message.id, failIfNotExists: false } }
+        : {}),
+    };
+    let reply;
+    try {
+      reply = await message.channel.send(payload);
+    } catch (error) {
+      if (
+        payload.embeds &&
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 50013
+      )
+        reply = await message.channel.send({ ...payload, embeds: undefined });
+      else throw error;
+    }
+
     return reply;
   };
+  const dispatchGeneratedMusic = (text: string, message: ChatMessage) => {
+    void onGenerated?.(text, message).catch(() =>
+      console.warn('Não foi possível concluir a ação musical gerada.'),
+    );
+  };
   const rememberReply = (result: { id: string }, text: string) => {
+    store.generated(result.id, text);
     recent.set(result.id, { text, at: now() });
     for (const [id, item] of recent)
       if (now() - item.at > 86400000 || recent.size > 100) recent.delete(id);
@@ -53,15 +87,19 @@ export function createChatHandler({
     ...activityOptions,
     enabled: () => ['timer', 'true', 'always'].includes(store.setting('auto') || ''),
     speak: async (channel) => {
-      const text = generate(store.texts(), {
-        chaos: store.setting('chaos') === 'true',
-        random,
-        maxLength: 160,
-        excluded: [...rejected, ...[...recent.values()].map((item) => item.text)],
-      });
-      if (!text || text.length > 160 || !safeText(text) || rejected.has(text)) return;
+      const text =
+        (await ai?.maybeReply(lastSpeaker?.content || '')) ||
+        generate(store.texts(), {
+          chaos: store.setting('chaos') !== 'false',
+          random,
+          maxLength: 160,
+          excluded: [...rejected, ...[...recent.values()].map((item) => item.text)],
+        });
+      if (!text || text.length > 160 || !normalizeText(text) || rejected.has(text))
+        return;
       const result = await send({ channel }, text);
       rememberReply(result, text);
+      if (lastSpeaker) dispatchGeneratedMusic(text, lastSpeaker);
     },
   });
   const guarded =
@@ -73,29 +111,32 @@ export function createChatHandler({
   const handle = guarded(async (message: ChatMessage) => {
     if (!matches(message) || message.author?.bot || message.webhookId) return;
     const mentioned = message.mentions?.users?.has(client.user!.id);
+    const learned = normalizeText(message.content);
+    if (learned) store.learn(message, learned);
     if (!mentioned) {
-      const text = safeText(message.content);
-      if (text) {
-        store.learn(message, text);
+      if (learned) {
+        lastSpeaker = message;
         activityTimer.noteActivity(message.channel, message.author.id);
-      } else return;
+      }
+      return;
     }
-    const auto = store.setting('auto');
-    const always = auto === 'always';
-    if (!mentioned) return;
+    mentions.enqueue(message);
+  });
+  const respondMention = async (message: ChatMessage) => {
+    const mentioned = true;
+    const always = false;
+    if (message.requestedQuote) {
+      const result = await send(message, message.requestedQuote);
+      rememberReply(result, message.requestedQuote);
+      return;
+    }
     const command = mentioned
       ? (message.content || '').replace(/<@!?\d+>/g, '').trim()
       : '';
     const admin = message.member?.permissions?.has(
       PermissionsBitField.Flags.ManageGuild,
     );
-    if (
-      now() - lastReply < 15000 &&
-      !(admin && /^(automatico|automático)\s+off$/i.test(command))
-    )
-      return;
     lastReply = now();
-    if (!mentioned) lastAuto = now();
     if (/^(esquecer|apagar aprendizado)$/i.test(command)) {
       if (!admin) return;
       activityTimer.reset();
@@ -152,12 +193,15 @@ export function createChatHandler({
     }
     const favorites = store
       .favorites()
-      .filter((text) => text.length <= 160 && safeText(text) && !rejected.has(text));
+      .filter(
+        (text) => text.length <= 160 && normalizeText(text) && !rejected.has(text),
+      );
     const text = /^(pérolas|perolas)$/i.test(command)
       ? favorites[Math.floor(random() * favorites.length)]
-      : generate(store.texts(), {
+      : (await ai?.maybeReply(message.content)) ||
+        generate(store.texts(), {
           seed: command.split(/\s+/)[0],
-          chaos: store.setting('chaos') === 'true',
+          chaos: store.setting('chaos') !== 'false',
           random,
           excluded: [...rejected, ...[...recent.values()].map((item) => item.text)],
         });
@@ -173,7 +217,9 @@ export function createChatHandler({
       return;
     const result = await send(message, text);
     rememberReply(result, text);
-  });
+    dispatchGeneratedMusic(text, message);
+  };
+  const mentions = createMentionQueue({ respond: respondMention, now });
   const remove = (message: Pick<ChatMessage, 'id' | 'guildId' | 'channelId'>) => {
     if (matches(message)) store.remove(message.id);
   };
@@ -181,7 +227,7 @@ export function createChatHandler({
     if (!matches(message)) return;
     store.remove(message.id);
     if (!message.author?.bot && !message.webhookId) {
-      const text = safeText(message.content);
+      const text = normalizeText(message.content);
       if (text) store.learn(message, text);
     }
   });
@@ -192,11 +238,13 @@ export function createChatHandler({
       !['👍', '👎'].includes(reaction.emoji.name || '')
     )
       return;
-    const item = recent.get(reaction.message.id);
+    const item =
+      recent.get(reaction.message.id) || store.generatedMessage(reaction.message.id);
     if (!item) return;
     const key = reaction.message.id + ':' + user.id;
     if (voters.get(key) === reaction.emoji.name) return;
     voters.set(key, reaction.emoji.name!);
+    store.vote(reaction.message.id, user.id, reaction.emoji.name!);
     if (voters.size > 2000) voters.delete(voters.keys().next().value!);
     if (reaction.emoji.name === '👍') {
       store.unReject(item.text);
@@ -213,6 +261,7 @@ export function createChatHandler({
     const key = reaction.message.id + ':' + user.id;
     if (voters.get(key) !== reaction.emoji.name) return;
     voters.delete(key);
+    store.removeVote(reaction.message.id, user.id, reaction.emoji.name!);
   });
   const bulkRemove = (
     messages: ReadonlyMap<string, Pick<ChatMessage, 'id' | 'guildId' | 'channelId'>>,
@@ -226,6 +275,25 @@ export function createChatHandler({
   client.on('messageUpdate', edit);
   client.on('messageReactionAdd', react);
   return {
+    async requestQuote(message: ChatMessage, text: string) {
+      if (text.length > 160) return;
+      mentions.enqueue({ ...message, requestedQuote: text });
+    },
+    async requestPhrase(message: ChatMessage, seed = '') {
+      mentions.enqueue({
+        ...message,
+        content: seed,
+        mentions: { users: { has: () => true } },
+      });
+    },
+    pearls() {
+      return store
+        .favoriteEntries()
+        .filter((entry) => entry.text.length <= 160 && !rejected.has(entry.text));
+    },
+    weeklyPearl() {
+      return store.weeklyPearl();
+    },
     configure(userIsAdmin: boolean, mode?: string, chaos?: boolean) {
       if (!userIsAdmin) throw new Error('É necessário Gerenciar Servidor.');
       if (mode !== undefined) {
@@ -244,13 +312,15 @@ export function createChatHandler({
         mode: !['timer', 'true', 'always'].includes(store.setting('auto') || '')
           ? 'mention'
           : store.setting('conversationMode') || 'discreet',
-        chaos: store.setting('chaos') === 'true',
+        chaos: store.setting('chaos') !== 'false',
         learnedMessages: store.texts().length,
+        ai: ai?.status(),
       };
     },
     close() {
       client.off('messageDeleteBulk', bulkRemove);
       client.off('messageReactionRemove', unreact);
+      mentions.close();
       activityTimer.close();
       client.off('messageCreate', handle);
       client.off('messageDelete', remove);
