@@ -65,8 +65,13 @@ try {
     const store = new ChatStore(config.markovPath);
     const ai = new AiReplyService(
       {
-        key: config.openaiKey,
-        model: config.openaiModel,
+        provider: config.aiProvider,
+        key:
+          config.aiProvider === 'openrouter' ? config.openrouterKey : config.openaiKey,
+        model:
+          config.aiProvider === 'openrouter'
+            ? config.openrouterModel
+            : config.openaiModel,
         chance: config.openaiChance,
         dailyLimit: config.openaiDailyLimit,
       },

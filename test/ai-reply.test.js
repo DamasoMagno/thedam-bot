@@ -90,3 +90,69 @@ test('chance zero não chama API e respostas não conseguem notificar pessoas', 
   assert.ok(!text.includes('@'));
   store.close();
 });
+
+test('OpenRouter usa chat completions e um modelo gratuito com os mesmos limites', async () => {
+  const store = new ChatStore(':memory:');
+  const requests = [];
+  const ai = new AiReplyService(
+    { ...config, provider: 'openrouter', model: 'openrouter/free' },
+    store,
+    async (url, options) => {
+      requests.push({ url, body: JSON.parse(options.body), headers: options.headers });
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: 'O gato virou DJ do churrasco.' } }],
+        }),
+      };
+    },
+    () => 0,
+  );
+  assert.equal(await ai.maybeReply('uma conversa'), 'O gato virou DJ do churrasco.');
+  assert.equal(requests[0].url, 'https://openrouter.ai/api/v1/chat/completions');
+  assert.equal(requests[0].body.model, 'openrouter/free');
+  assert.equal(requests[0].headers['X-Title'], 'TheDam');
+  assert.equal(requests[0].body.messages[0].role, 'system');
+  assert.equal(requests[0].body.reasoning, undefined);
+  store.close();
+});
+test('OpenRouter bloqueia modelo pago antes de fazer requisição', async () => {
+  const store = new ChatStore(':memory:');
+  let calls = 0;
+  const ai = new AiReplyService(
+    { ...config, provider: 'openrouter', model: 'openai/gpt-4o' },
+    store,
+    async () => {
+      calls++;
+    },
+    () => 0,
+  );
+  assert.equal(await ai.maybeReply('oi'), null);
+  assert.equal(calls, 0);
+  assert.match(ai.status().status, /pago bloqueado/);
+  store.close();
+});
+
+test('OpenRouter limita a 30 tentativas mesmo com configuração maior e reinício', async () => {
+  const store = new ChatStore(':memory:');
+  let calls = 0;
+  const options = {
+    ...config,
+    provider: 'openrouter',
+    model: 'openrouter/free',
+    dailyLimit: 200,
+  };
+  const fetcher = async () => {
+    calls++;
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Oi!' } }] }),
+    };
+  };
+  for (let i = 0; i < 35; i++) {
+    const service = new AiReplyService(options, store, fetcher, () => 0);
+    await service.maybeReply('oi');
+  }
+  assert.equal(calls, 30);
+  store.close();
+});

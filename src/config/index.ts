@@ -5,7 +5,21 @@ export function configuration(env = process.env) {
   const port = Number(env.PORT || 3031);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('PORT inválida.');
+  const aiProvider =
+    env.AI_PROVIDER || (env.OPENROUTER_API_KEY ? 'openrouter' : 'openai');
+  if (!['openai', 'openrouter'].includes(aiProvider))
+    throw new Error('AI_PROVIDER deve ser openai ou openrouter.');
+  const openrouterModel = env.OPENROUTER_MODEL || 'openrouter/free';
+  if (
+    aiProvider === 'openrouter' &&
+    openrouterModel !== 'openrouter/free' &&
+    !openrouterModel.endsWith(':free')
+  )
+    throw new Error('Use openrouter/free ou um modelo terminado em :free.');
   return {
+    aiProvider: aiProvider as 'openai' | 'openrouter',
+    openrouterKey: env.OPENROUTER_API_KEY || '',
+    openrouterModel,
     mediaChance: Math.max(0, Math.min(1, Number(env.MARKOV_MEDIA_CHANCE || 0.25) || 0)),
     openaiKey: env.OPENAI_API_KEY || '',
     openaiModel: env.OPENAI_MODEL || 'gpt-6-luna',

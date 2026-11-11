@@ -86,7 +86,7 @@ Não exige mínimo de mensagens para tentar gerar; pode reaproveitar frases apre
   participativo). A espera é sorteada: 2–5 minutos no discreto, 2–3 no participativo.
   Existe só um envio pendente; se não houver mensagem humana no último minuto ou a
   conversa esfriar, ele é cancelado. Menções cancelam o envio automático pendente.
-- **GIFs:** em aproximadamente 25% das respostas, no máximo um junto da mensagem,
+- **GIFs:** sorteio entre 18 reações, sem repetir as últimas oito. Em aproximadamente 25% das respostas, no máximo um junto da mensagem,
   sem temporizadores ou mensagens extras. `MARKOV_MEDIA_CHANCE=0` desliga.
 
 Comandos no geral:
@@ -100,16 +100,21 @@ Comandos no geral:
   Configurações exigem Gerenciar Servidor.
 - `@TheDam esquecer`: administrador apaga aprendizado, favoritas e preferências.
 
-Com `OPENAI_API_KEY` configurada, **15% das oportunidades de resposta** podem usar IA
+Com uma chave de IA configurada, **15% das oportunidades de resposta** podem usar IA
 para comentários ou perguntas curtas, engraçadas e irreverentes. A IA não cria uma
 nova oportunidade de envio: usa a mesma fila e o mesmo controle de atividade.
 Envia apenas a mensagem de contexto (até 500 caracteres), sem importar o histórico
-inteiro à API. Usa Responses API com `store:false`, até 100 tokens de saída, timeout
+inteiro à API. OpenAI usa Responses API com `store:false`; OpenRouter usa Chat Completions com modelos
+gratuitos. Há limite de tokens de saída e timeout
 curto e até **30 tentativas/dia**, contadas no SQLite mesmo após reiniciar. Pode haver
 retenção operacional pelo provedor conforme a política da conta. Saldo, permissões
 ou rede indisponíveis fazem voltar ao Markov, com espera antes de tentar a API de novo.
 
 ```dotenv
+AI_PROVIDER=openrouter
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openrouter/free
+# Opcional: AI_PROVIDER=openai para usar a chave e o modelo abaixo.
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-6-luna
 OPENAI_REPLY_CHANCE=0.15
@@ -117,7 +122,11 @@ OPENAI_DAILY_LIMIT=30
 MARKOV_MEDIA_CHANCE=0.25
 ```
 
-A chave é privada e requer saldo/créditos na API. Sem chave, não há chamadas de IA.
+As chaves ficam privadas. OpenAI requer saldo; o OpenRouter pode usar a cota gratuita
+com `openrouter/free` ou modelos terminados em `:free`. Outros modelos são bloqueados
+nesse provedor para evitar cobrança acidental. OpenRouter tem teto interno de 30 tentativas por dia UTC, mesmo se a variável pedir mais; falhas também contam. Não há fallback para modelos pagos nem para OpenAI. Ao atingir o teto, continua só com Markov. Sem chave, não há chamadas de IA.
+`HTTP-Referer` é opcional e não foi preenchido com um endereço fictício; o nome do
+aplicativo é enviado como `TheDam`. Cotas e disponibilidade são do provedor.
 `/dam diagnostico` informa o estado. O limite de chamadas não é um teto financeiro
 fornecido pela OpenAI; configure também o orçamento do projeto no painel da API.
 

@@ -4,7 +4,7 @@ import {
   parseMusicCommand,
   createGeneratedMusicActions,
 } from '../src/chat/music-actions.ts';
-import { chooseReplyMedia } from '../src/chat/media.ts';
+import { chooseReplyMedia, createReplyMediaPicker } from '../src/chat/media.ts';
 test('comandos gerados só executam tocar reconhecido e respeitam a identidade de quem pediu', async () => {
   assert.equal(parseMusicCommand('/dam tocar musica:Queen'), 'Queen');
   assert.equal(parseMusicCommand('/parar'), null);
@@ -31,4 +31,13 @@ test('comandos gerados só executam tocar reconhecido e respeitam a identidade d
 test('GIFs são opcionais e retornam no máximo uma mídia por resposta', () => {
   assert.equal(chooseReplyMedia({ chance: 0, random: () => 0 }), undefined);
   assert.equal(chooseReplyMedia({ chance: 1, random: () => 0 }).length, 1);
+});
+
+test('GIFs variam mesmo com sorteio igual e não repetem os últimos oito', () => {
+  const picker = createReplyMediaPicker();
+  const urls = Array.from(
+    { length: 9 },
+    () => picker({ chance: 1, random: () => 0 })[0].image.url,
+  );
+  assert.equal(new Set(urls).size, 9);
 });
