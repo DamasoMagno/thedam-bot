@@ -86,7 +86,8 @@ Não exige mínimo de mensagens para tentar gerar; pode reaproveitar frases apre
   participativo). A espera é sorteada: 2–5 minutos no discreto, 2–3 no participativo.
   Existe só um envio pendente; se não houver mensagem humana no último minuto ou a
   conversa esfriar, ele é cancelado. Menções cancelam o envio automático pendente.
-- **GIFs:** sorteio entre 18 reações, sem repetir as últimas oito. Em aproximadamente 25% das respostas, no máximo um junto da mensagem,
+- **Referências e brincadeiras:** o gerador prioriza palavras do assunto atual também presentes em mensagens de dias anteriores, permitindo recombinações entre épocas. Ocasionalmente transforma a frase em uma pergunta absurda, na mesma oportunidade de resposta. Sem novas chamadas à IA.
+- **GIFs:** seleção local por palavras do contexto (gatos, sono, carinho, trabalho, dúvidas, risadas e calls), com sorteio entre 18 reações e fallback aleatório, sem repetir as últimas oito. Em aproximadamente 25% das respostas, no máximo um junto da mensagem,
   sem temporizadores ou mensagens extras. `MARKOV_MEDIA_CHANCE=0` desliga.
 
 Comandos no geral:
@@ -95,6 +96,7 @@ Comandos no geral:
 - `/dam perolas`: menu das favoritas; `/dam perola-da-semana`: melhor saldo de votos
   dos últimos sete dias, sob comando, sem publicação automática.
 - 👍 guarda uma resposta; 👎 rejeita. Troca e remoção de voto atualizam o placar.
+- `@TheDam nostalgia`: sorteia uma frase real com mais de 24 horas, dentro dos 30 dias de retenção. Não executa comandos musicais da lembrança.
 - `@TheDam frequentes`: mostra nomes recorrentes sem pings.
 - `/dam conversa`: modos Só por menção, Discreto, Mais participativo e caos.
   Configurações exigem Gerenciar Servidor.
@@ -134,7 +136,7 @@ Se uma frase gerada começar com `/tocar`, `/dam tocar`, `!tocar` ou `!play`, o 
 pode adicionar a faixa diretamente à sua própria fila. Usa a identidade da pessoa que
 provocou a resposta, exige a call correta e aceita só tocar (nunca executar código ou
 comandos destrutivos). Limite: uma ação musical gerada a cada dez minutos. Isso não
-aciona Jockie nem outros bots. Mensagens de erro dessa brincadeira não são repetidas.
+aciona Jockie nem outros bots. Mensagens como `m!p` podem ser aprendidas como texto, mas não constituem integração com o Jockie: não há uma API pública documentada de controle entre bots. Mensagens de erro dessa brincadeira não são repetidas.
 
 SQLite mantém até 5.000 mensagens por 30 dias, favoritas e rejeitadas (100 cada),
 300 respostas geradas com votos e o contador diário da IA. Exclusões/edições recebidas,

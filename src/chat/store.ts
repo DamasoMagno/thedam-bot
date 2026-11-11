@@ -110,6 +110,13 @@ export class ChatStore {
       .all()
       .map((row) => String(row.text));
   }
+  olderTexts(before: number) {
+    this.prune();
+    return this.db
+      .prepare('SELECT text FROM messages WHERE created < ? ORDER BY created ASC')
+      .all(before)
+      .map((row) => String(row.text));
+  }
   remember(id: string, text: string) {
     this.db
       .prepare('INSERT OR REPLACE INTO favorites VALUES(?,?,?)')

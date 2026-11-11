@@ -1,3 +1,4 @@
+import { generateConversationReply, recallMemory } from './conversation.ts';
 import { chooseReplyMedia } from './media.ts';
 import type { AiReplyService } from '../ai/reply-service.ts';
 import { createMentionQueue } from './mention-queue.ts';
@@ -43,7 +44,16 @@ export function createChatHandler({
   const send = async (message: Pick<ChatMessage, 'channel'>, text: string) => {
     activityTimer.noteReply();
     const payload = {
-      embeds: chooseReplyMedia({ chance: mediaChance, random }),
+      embeds: chooseReplyMedia({
+        chance: mediaChance,
+        random,
+        context:
+          ('content' in message
+            ? String(message.content)
+            : lastSpeaker?.content || '') +
+          ' ' +
+          text,
+      }),
       content: text,
       allowedMentions: { parse: [] as never[], repliedUser: false },
       ...('id' in message && typeof message.id === 'string' && message.id
@@ -89,7 +99,9 @@ export function createChatHandler({
     speak: async (channel) => {
       const text =
         (await ai?.maybeReply(lastSpeaker?.content || '')) ||
-        generate(store.texts(), {
+        generateConversationReply(store.texts(), lastSpeaker?.content || '', {
+          generate,
+          olderMessages: store.olderTexts(now() - 86400000),
           chaos: store.setting('chaos') !== 'false',
           random,
           maxLength: 160,
@@ -174,7 +186,7 @@ export function createChatHandler({
     if (/^ajuda$/i.test(command))
       return send(
         message,
-        'Me mencione com uma palavra para gerar uma frase. “pérolas” recupera uma favorita; “frequentes” mostra os participantes recorrentes sem notificá-los. Administradores: “caos on/off”, “automatico temporizador/off” e “esquecer”. 👍 guarda uma frase; 👎 tira dos favoritos e evita repetir essa frase.',
+        'Me mencione com uma palavra para gerar uma frase. “nostalgia” resgata uma frase antiga; “pérolas” recupera uma favorita; “frequentes” mostra os participantes recorrentes sem notificá-los. Administradores: “caos on/off”, “automatico temporizador/off” e “esquecer”. 👍 guarda uma frase; 👎 tira dos favoritos e evita repetir essa frase.',
       );
     if (/^frequentes$/i.test(command)) {
       const ids = store.frequent();
@@ -191,6 +203,18 @@ export function createChatHandler({
           : 'Ainda tenho poucas mensagens para identificar os frequentadores.',
       );
     }
+    if (/^(?:nostalgia|lembrar|frase antiga)$/iu.test(command)) {
+      const text = recallMemory(
+        store.olderTexts(now() - 86400000),
+        [...rejected, ...[...recent.values()].map((item) => item.text)],
+        random,
+      );
+      if (!text)
+        return send(message, 'Ainda não tenho uma lembrança antiga disponível.');
+      const result = await send(message, text);
+      rememberReply(result, text);
+      return;
+    }
     const favorites = store
       .favorites()
       .filter(
@@ -199,8 +223,9 @@ export function createChatHandler({
     const text = /^(pérolas|perolas)$/i.test(command)
       ? favorites[Math.floor(random() * favorites.length)]
       : (await ai?.maybeReply(message.content)) ||
-        generate(store.texts(), {
-          seed: command.split(/\s+/)[0],
+        generateConversationReply(store.texts(), command, {
+          generate,
+          olderMessages: store.olderTexts(now() - 86400000),
           chaos: store.setting('chaos') !== 'false',
           random,
           excluded: [...rejected, ...[...recent.values()].map((item) => item.text)],
