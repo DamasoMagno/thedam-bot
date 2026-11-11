@@ -1,3 +1,4 @@
+import { MAX_LEARNED_MESSAGES } from './limits.ts';
 import type { ChatMessage } from './types.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -90,9 +91,11 @@ export class ChatStore {
     this.db
       .prepare('DELETE FROM messages WHERE created < ?')
       .run(Date.now() - 30 * 86400000);
-    this.db.exec(
-      'DELETE FROM messages WHERE id NOT IN(SELECT id FROM messages ORDER BY created DESC LIMIT 2000)',
-    );
+    this.db
+      .prepare(
+        'DELETE FROM messages WHERE id NOT IN(SELECT id FROM messages ORDER BY created DESC LIMIT ?)',
+      )
+      .run(MAX_LEARNED_MESSAGES);
   }
   unReject(text: string) {
     this.db.prepare('DELETE FROM rejected WHERE text=?').run(text);

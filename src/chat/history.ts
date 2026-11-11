@@ -1,3 +1,4 @@
+import { MAX_LEARNED_MESSAGES } from './limits.ts';
 import type { ChatMessage } from './types.ts';
 import type { ChatStore } from './store.ts';
 import { normalizeText } from './model.ts';
@@ -9,7 +10,7 @@ export async function importGeneralHistory({
   channel,
   store,
   now = Date.now(),
-  limit = 2000,
+  limit = MAX_LEARNED_MESSAGES,
 }: {
   channel: {
     id: string;
@@ -31,7 +32,7 @@ export async function importGeneralHistory({
   let before: string | undefined,
     imported = 0,
     scanned = 0;
-  while (imported < Math.min(limit, 2000)) {
+  while (imported < Math.min(limit, MAX_LEARNED_MESSAGES)) {
     const page = await channel.messages.fetch({
       limit: 100,
       ...(before ? { before } : {}),
@@ -51,7 +52,7 @@ export async function importGeneralHistory({
       if (!text) continue;
       store.learn(message, text, message.createdTimestamp);
       imported++;
-      if (imported >= Math.min(limit, 2000)) break;
+      if (imported >= Math.min(limit, MAX_LEARNED_MESSAGES)) break;
     }
     if (!oldest || oldest.id === before || oldest.createdTimestamp! < cutoff) break;
     before = oldest.id;

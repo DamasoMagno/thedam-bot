@@ -1,0 +1,1 @@
+export const MAX_LEARNED_MESSAGES = 5000;

@@ -136,10 +136,10 @@ provocou a resposta, exige a call correta e aceita só tocar (nunca executar có
 comandos destrutivos). Limite: uma ação musical gerada a cada dez minutos. Isso não
 aciona Jockie nem outros bots. Mensagens de erro dessa brincadeira não são repetidas.
 
-SQLite mantém até 2.000 mensagens por 30 dias, favoritas e rejeitadas (100 cada),
+SQLite mantém até 5.000 mensagens por 30 dias, favoritas e rejeitadas (100 cada),
 300 respostas geradas com votos e o contador diário da IA. Exclusões/edições recebidas,
 inclusive em lote, atualizam o corpus. O histórico não é reimportado ao reiniciar.
-A função `chat/history.ts` permite importar até 2.000 mensagens dos últimos 30 dias.
+A função `chat/history.ts` permite importar até 5.000 mensagens dos últimos 30 dias.
 
 ## Integração com o site
 

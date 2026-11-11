@@ -23,12 +23,12 @@ test('aprendizado não filtra conteúdo e neutraliza apenas marcações de menç
 });
 test('Markov limita o corpus e apaga mensagens/favoritos', () => {
   const store = new ChatStore(':memory:');
-  for (let i = 0; i < 2010; i++)
+  for (let i = 0; i < 5010; i++)
     store.learn(
       { id: String(i), author: { id: 'ana' } },
       'o dragão apareceu no meio da call',
     );
-  assert.equal(store.texts().length, 2000);
+  assert.equal(store.texts().length, 5000);
   store.remember('favorite', 'o dragão foi dormir');
   assert.equal(store.favorites().length, 1);
   store.clear();
