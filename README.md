@@ -87,8 +87,8 @@ Não exige mínimo de mensagens para tentar gerar; pode reaproveitar frases apre
   Existe só um envio pendente; se não houver mensagem humana no último minuto ou a
   conversa esfriar, ele é cancelado. Menções cancelam o envio automático pendente.
 - **Referências e brincadeiras:** o gerador prioriza palavras do assunto atual também presentes em mensagens de dias anteriores, permitindo recombinações entre épocas. Ocasionalmente transforma a frase em uma pergunta absurda, na mesma oportunidade de resposta. Sem novas chamadas à IA.
-- **GIFs:** seleção local por palavras do contexto (gatos, sono, carinho, trabalho, dúvidas, risadas e calls), com sorteio entre 18 reações e fallback aleatório, sem repetir as últimas oito. Em aproximadamente 25% das respostas, no máximo um junto da mensagem,
-  sem temporizadores ou mensagens extras. `MARKOV_MEDIA_CHANCE=0` desliga.
+- **GIFs:** seleção local por palavras do contexto em 19 categorias (incluindo música/dança, comemoração, surpresa, tristeza, comida e filmes), com sorteio entre 42 reações e fallback aleatório, sem repetir as últimas oito. Em aproximadamente 25% das respostas, no máximo um junto da mensagem,
+  sem temporizadores ou mensagens extras. O catálogo contém apenas URLs; o bot não baixa os arquivos nem consulta uma API para escolher GIFs durante a conversa. `MARKOV_MEDIA_CHANCE=0` desliga.
 
 Comandos no geral:
 

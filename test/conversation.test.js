@@ -120,3 +120,19 @@ test('nostalgia por menção não chama IA, não toca comandos antigos e não re
   assert.equal(musicCalls, 0);
   controller.close();
 });
+
+test('novas categorias reconhecem música e comida com acentos sem repetir GIFs', () => {
+  const picker = createReplyMediaPicker();
+  const music = picker({ chance: 1, random: () => 0, context: 'música na playlist' });
+  assert.match(music[0].image.url, /L0qTl8hl84EDly62J1/);
+  const food = picker({ chance: 1, random: () => 0, context: 'hora do almoço' });
+  assert.match(food[0].image.url, /l0MYyoYPvz22wTXkQ/);
+  const sad = picker({ chance: 1, random: () => 0, context: 'triste e chorando' });
+  assert.match(sad[0].image.url, /OPU6wzx8JrHna/);
+  const fallback = picker({ chance: 1, random: () => 0, context: 'xyz123' });
+  assert.ok(fallback[0].image.url);
+  assert.equal(
+    new Set([music, food, sad, fallback].map((result) => result[0].image.url)).size,
+    4,
+  );
+});
