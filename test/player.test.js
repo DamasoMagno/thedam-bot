@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PlayerService } from '../src/player-service.js';
-import { parseQuery } from '../src/catalog.js';
+import { PlayerService } from '../src/music/player-service.ts';
+import { parseQuery } from '../src/music/catalog.ts';
 const guild = '200000000000000001',
   user = '100000000000000001';
 function fixture() {
@@ -137,4 +137,60 @@ test('links só aceitam vídeos/tracks das plataformas suportadas', () => {
       () => parseQuery(url),
       (e) => e.status === 400,
     );
+});
+
+test('parar não espera busca lenta e o resultado pendente é invalidado', async () => {
+  const f = fixture();
+  let release;
+  f.catalog.search = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  const search = f.service.run(guild, user, 'search', { query: 'x' });
+  await new Promise(setImmediate);
+  await f.service.run(guild, user, 'stop');
+  release([{ provider: 'youtube', id: 'abcdefghijk', title: 'Teste' }]);
+  await assert.rejects(search, /cancelado/);
+  assert.equal(f.played, 0);
+  f.service.close();
+});
+test('fila remove por identidade estável e repetir não impede pular', async () => {
+  const f = fixture();
+  await add(f);
+  await add(f);
+  await add(f);
+  let state = f.service.state(guild);
+  await f.service.run(guild, user, 'remove', { id: state.queue[0].queueId });
+  assert.equal(f.service.state(guild).queue.length, 1);
+  await f.service.run(guild, user, 'repeat', { enabled: true });
+  await f.service.run(guild, user, 'skip');
+  assert.equal(f.played, 2);
+  assert.equal(f.service.state(guild).repeat, false);
+  await assert.rejects(
+    f.service.run(guild, user, 'remove', { id: 'stale' }),
+    /não está mais/,
+  );
+  f.service.close();
+});
+test('biblioteca compartilha playlists e histórico, mantém favoritos pessoais e toca a lista', async () => {
+  const { LibraryRepository } = await import('../src/music/library-repository.ts');
+  const f = fixture();
+  const db = new LibraryRepository(':memory:');
+  f.service.library = db;
+  await add(f);
+  await add(f);
+  const saved = await f.service.run(guild, user, 'savePlaylist', {
+    name: 'Rock',
+    category: 'Gênero',
+  });
+  assert.equal(saved.playlist.tracks.length, 2);
+  await f.service.run(guild, user, 'favorite');
+  assert.equal((await f.service.run(guild, user, 'favorites')).favorites.length, 1);
+  assert.equal((await f.service.run(guild, user, 'history')).history.length, 1);
+  await f.service.run(guild, user, 'playlistEnqueue', { id: saved.playlist.id });
+  assert.equal(f.service.state(guild).queue.length, 3);
+  await f.service.run(guild, user, 'deduplicate');
+  assert.equal(f.service.state(guild).queue.length, 0);
+  f.service.close();
+  db.close();
 });

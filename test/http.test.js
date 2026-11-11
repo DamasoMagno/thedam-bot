@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from '../src/http.js';
+import { createServer } from '../src/http/server.ts';
 test('API privada recusa segredo ausente e valida a identidade antes de controlar a fila', async (t) => {
   const calls = [];
   const secret = 'a'.repeat(64);

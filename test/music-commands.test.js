@@ -5,8 +5,8 @@ import {
   createMusicCommands,
   registerMusicCommands,
   MUSIC_GUILD_ID,
-} from '../src/music-commands.js';
-import { MusicError } from '../src/error.js';
+} from '../src/music/commands.ts';
+import { MusicError } from '../src/shared/music-error.ts';
 
 function fixture(run = async () => ({ current: null, queue: [] })) {
   const client = new EventEmitter();
@@ -39,9 +39,11 @@ function fixture(run = async () => ({ current: null, queue: [] })) {
       replies.push(value);
     },
   };
+  interaction.isButton = () => false;
+  interaction.isStringSelectMenu = () => false;
   return { client, handler, interaction, replies, calls };
 }
-test('slash toca o primeiro resultado usando a identidade do Discord e o serviço compartilhado', async () => {
+test('busca por nome apresenta versões antes de conectar o bot', async () => {
   const f = fixture(async (_guild, _user, action) =>
     action === 'search'
       ? { tracks: [{ token: 'private-result', title: 'Música' }] }
@@ -51,9 +53,12 @@ test('slash toca o primeiro resultado usando a identidade do Discord e o serviç
   await f.handler.handle(f.interaction);
   assert.deepEqual(f.calls, [
     [MUSIC_GUILD_ID, 'user', 'search', { query: 'minha música', provider: 'youtube' }],
-    [MUSIC_GUILD_ID, 'user', 'enqueue', { token: 'private-result' }],
   ]);
-  assert.match(f.replies.at(-1).content, /Adicionada/);
+  assert.match(f.replies.at(-1).content, /Escolha/);
+  assert.equal(
+    f.replies.at(-1).components[0].components[0].options[0].value,
+    'private-result',
+  );
   assert.deepEqual(f.replies.at(-1).allowedMentions.parse, []);
   assert.ok(f.replies[0].flags);
   f.handler.close();
@@ -110,9 +115,12 @@ test('comandos são registrados somente no Amigos sem substituir comandos de out
   const commands = [];
   await registerMusicCommands({
     application: {
-      commands: { create: async (command, guild) => commands.push({ command, guild }) },
+      commands: {
+        fetch: async () => ({ find: () => undefined }),
+        create: async (command, guild) => commands.push({ command, guild }),
+      },
     },
   });
-  assert.equal(commands.length, 6);
+  assert.equal(commands.length, 7);
   assert.ok(commands.every(({ guild }) => guild === MUSIC_GUILD_ID));
 });

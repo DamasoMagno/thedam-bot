@@ -1,4 +1,4 @@
-export function safeText(value) {
+export function safeText(value: unknown) {
   if (typeof value !== 'string' || value.length > 400) return null;
   const text = value
     .normalize('NFKC')
@@ -16,18 +16,26 @@ export function safeText(value) {
   return text;
 }
 export function generateText(
-  messages,
-  { seed = '', chaos = false, random = Math.random, excluded = [] } = {},
+  messages: string[],
+  {
+    seed = '',
+    chaos = false,
+    random = Math.random,
+    excluded = [] as string[],
+    maxLength = 160,
+  } = {},
 ) {
-  const rows = [...new Set(messages.map(safeText).filter(Boolean))];
+  const rows = [
+    ...new Set(messages.map(safeText).filter((text): text is string => Boolean(text))),
+  ];
   const blocked = new Set(
     [...rows, ...excluded].map((text) => text.toLocaleLowerCase('pt-BR')),
   );
   if (!rows.length) return null;
   const order = chaos ? 1 : 2,
-    chain = new Map(),
-    reverse = new Map(),
-    starts = [];
+    chain = new Map<string, (string | null)[]>(),
+    reverse = new Map<string, (string | null)[]>(),
+    starts: string[][] = [];
   for (const row of rows) {
     const words = row.split(' ');
     if (words.length < order + 1) continue;
@@ -44,7 +52,7 @@ export function generateText(
     }
   }
   if (!starts.length) return null;
-  const pick = (items) =>
+  const pick = <T>(items: T[]): T =>
     items[Math.min(items.length - 1, Math.floor(random() * items.length))];
   const seedWord = seed.toLocaleLowerCase('pt-BR').replace(/[^\p{L}\p{N}]/gu, '');
   const matching = [...chain.keys()]
@@ -69,7 +77,7 @@ export function generateText(
         if (prefix === null) break;
         words.unshift(prefix);
       }
-    for (let i = 0; i < 32 && words.length < 35; i++) {
+    for (let i = 0; i < 32 && words.length < 24; i++) {
       const options = chain.get(words.slice(-order).join('\u0000'));
       if (!options) break;
       const next = pick(options);
@@ -79,7 +87,7 @@ export function generateText(
     const result = words.join(' ');
     if (
       words.length >= 1 &&
-      result.length <= 240 &&
+      result.length <= maxLength &&
       safeText(result) &&
       !blocked.has(result.toLocaleLowerCase('pt-BR'))
     )

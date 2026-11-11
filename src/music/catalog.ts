@@ -1,8 +1,28 @@
+import type { Track } from './types.ts';
+import type { configuration } from '../config/index.ts';
+type Config = ReturnType<typeof configuration>;
+interface ExtractedTrack {
+  id: string;
+  title?: string;
+  channel?: string;
+  uploader?: string;
+  duration?: number;
+}
+interface ExtractedResult extends Partial<ExtractedTrack> {
+  entries?: ExtractedTrack[];
+}
+interface SpotifyTrack {
+  id: string;
+  name: string;
+  artists?: { name: string }[];
+  duration_ms: number;
+}
 import { execFile } from 'node:child_process';
-import { MusicError } from './error.js';
+import { MusicError } from '../shared/music-error.ts';
 
-export const youtubeId = (value) => /^[A-Za-z0-9_-]{11}$/.test(value || '');
-export function parseQuery(value, provider = 'youtube') {
+export const youtubeId = (value: unknown) =>
+  /^[A-Za-z0-9_-]{11}$/.test(typeof value === 'string' ? value : '');
+export function parseQuery(value: unknown, provider = 'youtube') {
   if (
     !['youtube', 'spotify'].includes(provider) ||
     typeof value !== 'string' ||
@@ -33,17 +53,21 @@ export function parseQuery(value, provider = 'youtube') {
         ? url.searchParams.get('v') ||
           /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})\/?$/.exec(url.pathname)?.[1]
         : null;
-  if (youtubeId(video)) return { provider: 'youtube', video };
+  if (youtubeId(video)) return { provider: 'youtube' as const, video };
   const spotify =
     host === 'open.spotify.com' &&
     /^\/(?:intl-[a-z]+\/)?track\/([a-zA-Z0-9]{22})\/?$/.exec(url.pathname);
-  if (spotify) return { provider: 'spotify', track: spotify[1] };
+  if (spotify) return { provider: 'spotify' as const, track: spotify[1] };
   throw new MusicError(
     400,
     'Use um link de música do YouTube ou Spotify. Playlists ainda não são aceitas.',
   );
 }
-export function runExtractor(binary, args) {
+export function runExtractor(
+  binary: string,
+  args: string[],
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<ExtractedResult> {
   return new Promise((resolve, reject) =>
     execFile(
       binary,
@@ -55,7 +79,7 @@ export function runExtractor(binary, args) {
         'node',
         ...args,
       ],
-      { timeout: 25000, maxBuffer: 1024 * 1024, windowsHide: true },
+      { timeout: 25000, maxBuffer: 1024 * 1024, windowsHide: true, signal },
       (error, stdout) => {
         if (error)
           return reject(
@@ -71,7 +95,11 @@ export function runExtractor(binary, args) {
   );
 }
 export class Catalog {
-  constructor(config, { extract = runExtractor, fetchImpl = fetch } = {}) {
+  config!: Config;
+  extract!: typeof runExtractor;
+  fetch!: typeof fetch;
+  token: { until: number; value: string } | null;
+  constructor(config: Config, { extract = runExtractor, fetchImpl = fetch } = {}) {
     Object.assign(this, { config, extract, fetch: fetchImpl });
     this.token = null;
   }
@@ -81,7 +109,7 @@ export class Catalog {
         503,
         'A busca no Spotify precisa ser configurada pelo administrador.',
       );
-    if (this.token?.until > Date.now()) return this.token.value;
+    if (this.token && this.token.until > Date.now()) return this.token.value;
     const response = await this.fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: {
@@ -104,17 +132,23 @@ export class Catalog {
     };
     return this.token.value;
   }
-  async search(query, provider) {
+  async search(
+    query: unknown,
+    provider?: string,
+    { signal }: { signal?: AbortSignal } = {},
+  ): Promise<Track[]> {
     const parsed = parseQuery(query, provider);
     if (parsed.provider === 'spotify') {
       const token = await this.spotifyToken();
       const path = parsed.track
         ? '/tracks/' + parsed.track
         : '/search?' +
-          new URLSearchParams({ q: parsed.query, type: 'track', limit: '5' });
+          new URLSearchParams({ q: parsed.query || '', type: 'track', limit: '5' });
       const response = await this.fetch('https://api.spotify.com/v1' + path, {
         headers: { Authorization: 'Bearer ' + token },
-        signal: AbortSignal.timeout(10000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+          : AbortSignal.timeout(10000),
       });
       if (!response.ok) {
         if (response.status === 401) this.token = null;
@@ -122,9 +156,9 @@ export class Catalog {
       }
       const data = await response.json();
       return (parsed.track ? [data] : data.tracks?.items || [])
-        .filter((t) => t?.id && t.name)
-        .map((t) => ({
-          provider: 'spotify',
+        .filter((t: SpotifyTrack) => t?.id && t.name)
+        .map((t: SpotifyTrack) => ({
+          provider: 'spotify' as const,
           id: t.id,
           title: t.name,
           artist: (t.artists || []).map((a) => a.name).join(', '),
@@ -134,29 +168,28 @@ export class Catalog {
     const target = parsed.video
       ? 'https://www.youtube.com/watch?v=' + parsed.video
       : 'ytsearch5:' + parsed.query;
-    const data = await this.extract(this.config.ytdlp, [
-      '--dump-single-json',
-      '--flat-playlist',
-      '--no-playlist',
-      '--',
-      target,
-    ]);
+    const data = await this.extract(
+      this.config.ytdlp,
+      ['--dump-single-json', '--flat-playlist', '--no-playlist', '--', target],
+      { signal },
+    );
     return (data.entries || [data])
-      .filter((t) => youtubeId(t.id))
+      .filter((t): t is ExtractedTrack => youtubeId(t.id))
       .slice(0, 5)
       .map((t) => ({
-        provider: 'youtube',
+        provider: 'youtube' as const,
         id: t.id,
         title: String(t.title || 'Música').slice(0, 200),
         artist: String(t.channel || t.uploader || '').slice(0, 160),
-        duration: Number.isFinite(t.duration) ? Math.round(t.duration) : null,
+        duration: Number.isFinite(t.duration) ? Math.round(t.duration!) : null,
       }));
   }
-  async playable(track) {
+  async playable(track: Track, options: { signal?: AbortSignal } = {}): Promise<Track> {
     if (track.provider === 'youtube') return track;
     const matches = await this.search(
       track.artist + ' ' + track.title + ' official audio',
       'youtube',
+      options,
     );
     if (!matches.length)
       throw new MusicError(404, 'Não encontrei uma versão desta música no YouTube.');

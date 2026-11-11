@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { safeText, generateText } from '../src/chat/model.js';
-import { ChatStore } from '../src/chat/store.js';
-import { createChatHandler } from '../src/chat/handler.js';
+import { safeText, generateText } from '../src/chat/model.ts';
+import { ChatStore } from '../src/chat/store.ts';
+import { createChatHandler } from '../src/chat/handler.ts';
 
 test('Markov não armazena segredos, links, emails, números longos ou menções', () => {
   for (const text of [
@@ -87,7 +87,7 @@ test('Markov só coleta no geral e só responde quando mencionado, sem pings ou 
   controller.close();
 });
 test('música é rejeitada fora do Amigos antes de consultar o Discord', async () => {
-  const { PlayerService } = await import('../src/player-service.js');
+  const { PlayerService } = await import('../src/music/player-service.ts');
   let checked = 0;
   const service = new PlayerService({
     gateway: {
@@ -133,88 +133,19 @@ test('geração por palavra mistura fragmentos em vez de copiar o corpus', () =>
   store.close();
 });
 
-test('modo sempre responde a mensagens seguidas sem menção, ignora bots e filtros e permite desligar', async () => {
+test('modos antigos não respondem a cada mensagem e administradores podem desligar', async () => {
   const client = new EventEmitter();
   client.user = { id: '123456789012345678' };
   const store = new ChatStore(':memory:');
   store.setting('auto', 'always');
   const sent = [];
-  let generated = 0;
   const controller = createChatHandler({
     client,
     store,
     channelId: 'geral',
     guildId: 'amigos',
-    now: () => 100000,
-    generate: () => `uma nova frase engraçada número ${++generated}`,
   });
   const message = {
-    id: 'one',
-    guildId: 'amigos',
-    channelId: 'geral',
-    author: { id: 'ana' },
-    content: 'o dragão entrou na nossa call',
-    mentions: { users: new Set() },
-    channel: {
-      send: async (payload) => {
-        sent.push(payload);
-        return { id: String(sent.length) };
-      },
-    },
-  };
-  const emit = async (changes = {}) => {
-    client.emit('messageCreate', { ...message, ...changes });
-    await new Promise(setImmediate);
-  };
-  await emit();
-  await emit({ id: 'two', content: 'vamos jogar juntos agora' });
-  assert.equal(sent.length, 2);
-  await emit({ author: { id: 'otherbot', bot: true } });
-  await emit({ content: 'minha senha e segredo' });
-  await emit({ channelId: 'outro' });
-  await emit({ guildId: 'outro' });
-  assert.equal(sent.length, 2);
-  await emit({
-    content: 'automatico off',
-    member: { permissions: { has: () => true } },
-  });
-  assert.equal(
-    store.setting('auto'),
-    'always',
-    'mensagens sem menção não executam comandos',
-  );
-  await emit({
-    content: '<@123456789012345678> automatico off',
-    mentions: { users: new Set([client.user.id]) },
-    member: { permissions: { has: () => false } },
-  });
-  assert.equal(store.setting('auto'), 'always');
-  await emit({
-    content: '<@123456789012345678> automatico off',
-    mentions: { users: new Set([client.user.id]) },
-    member: { permissions: { has: () => true } },
-  });
-  assert.equal(store.setting('auto'), 'false');
-  const before = sent.length;
-  await emit();
-  assert.equal(sent.length, before);
-  assert.ok(sent.every((payload) => payload.allowedMentions.parse.length === 0));
-  controller.close();
-});
-
-test('modo sempre responde mesmo a texto curto e sem aprendizado suficiente', async () => {
-  const client = new EventEmitter();
-  client.user = { id: 'bot' };
-  const store = new ChatStore(':memory:');
-  store.setting('auto', 'always');
-  const sent = [];
-  const controller = createChatHandler({
-    client,
-    store,
-    channelId: 'geral',
-    guildId: 'amigos',
-  });
-  client.emit('messageCreate', {
     id: 'oi',
     guildId: 'amigos',
     channelId: 'geral',
@@ -227,11 +158,16 @@ test('modo sempre responde mesmo a texto curto e sem aprendizado suficiente', as
         return { id: 'reply' };
       },
     },
-  });
+  };
+  client.emit('messageCreate', message);
   await new Promise(setImmediate);
   assert.deepEqual(store.texts(), ['oi']);
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].content, /aprendendo/);
+  assert.equal(sent.length, 0);
+  assert.throws(() => controller.configure(false, 'discreet'), /Gerenciar/);
+  controller.configure(true, 'discreet');
+  assert.equal(store.setting('auto'), 'timer');
+  controller.configure(true, 'mention');
+  assert.equal(store.setting('auto'), 'false');
   controller.close();
 });
 
@@ -263,7 +199,7 @@ test('repetições são aceitas e a geração pode evitar apenas respostas recen
 
 test('histórico importa apenas texto seguro do geral, preserva data, pagina e não gera respostas', async () => {
   const { importGeneralHistory, GENERAL_CHANNEL_ID, AMIGOS_GUILD_ID } =
-    await import('../src/chat/history.js');
+    await import('../src/chat/history.ts');
   const store = new ChatStore(':memory:');
   const time = Date.now();
   const row = (id, content, extra = {}) => ({
@@ -310,4 +246,25 @@ test('histórico importa apenas texto seguro do geral, preserva data, pagina e n
     importGeneralHistory({ channel: { ...channel, guildId: 'other' }, store }),
   );
   store.close();
+});
+
+test('mensagens expiradas são removidas mesmo sem novo aprendizado', () => {
+  const store = new ChatStore(':memory:');
+  store.db
+    .prepare('INSERT INTO messages VALUES(?,?,?,?)')
+    .run('old', 'ana', 'texto antigo', Date.now() - 31 * 86400000);
+  assert.deepEqual(store.texts(), []);
+  store.close();
+});
+test('respostas geradas respeitam 160 caracteres', () => {
+  const rows = [
+    'vou jogar com o dragão hoje',
+    'vou jogar com o gato amanhã',
+    'o dragão foi dormir depois',
+    'o gato foi cantar depois',
+  ];
+  for (let i = 0; i < 20; i++) {
+    const output = generateText(rows);
+    if (output) assert.ok(output.length <= 160);
+  }
 });

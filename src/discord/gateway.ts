@@ -1,3 +1,5 @@
+import type { configuration } from '../config/index.ts';
+import type { VoiceSession } from '../music/types.ts';
 import {
   Client,
   GatewayIntentBits,
@@ -15,9 +17,13 @@ import {
   StreamType,
   NoSubscriberBehavior,
 } from '@discordjs/voice';
-import { MusicError } from './error.js';
+import { MusicError } from '../shared/music-error.ts';
 export class DiscordGateway {
-  constructor(config) {
+  config: ReturnType<typeof configuration>;
+  client: Client;
+  emptyTimers: Map<string, ReturnType<typeof setTimeout>>;
+  connections: Map<string, { channel: string; disconnected?: () => void }>;
+  constructor(config: ReturnType<typeof configuration>) {
     this.config = config;
     this.client = new Client({
       intents: [
@@ -45,7 +51,9 @@ export class DiscordGateway {
         active.disconnected?.();
         return;
       }
-      const channel = guild.channels.cache.get(active.channel);
+      const candidate = guild.channels.cache.get(active.channel);
+      const channel =
+        candidate?.type === ChannelType.GuildVoice ? candidate : undefined;
       const listeners = channel?.members.filter((member) => !member.user.bot).size || 0;
       if (listeners) {
         clearTimeout(this.emptyTimers.get(guild.id));
@@ -65,19 +73,30 @@ export class DiscordGateway {
     if (!this.client.isReady())
       await new Promise((resolve) => this.client.once('clientReady', resolve));
   }
-  async authorize(guildId, userId) {
+  async member(guildId: string, userId: string) {
     const guild = this.client.guilds.cache.get(guildId);
-    if (!guild) throw new MusicError(403, 'Adicione o bot a este servidor do Discord.');
-    let member;
+    if (!guild) throw new MusicError(403, 'Adicione o bot ao servidor Amigos.');
     try {
-      member = await guild.members.fetch(userId);
+      return await guild.members.fetch(userId);
     } catch {
       throw new MusicError(403, 'Você não pertence a este servidor.');
     }
+  }
+  async isAdmin(guild: string, user: string) {
+    return (await this.member(guild, user)).permissions.has(
+      PermissionsBitField.Flags.ManageGuild,
+    );
+  }
+  async authorize(guildId: string, userId: string) {
+    const guild = this.client.guilds.cache.get(guildId);
+    if (!guild) throw new MusicError(403, 'Adicione o bot a este servidor do Discord.');
+    const member = await this.member(guildId, userId);
     const channel = member.voice.channel;
     if (!channel || channel.type !== ChannelType.GuildVoice)
       throw new MusicError(409, 'Entre em uma call de voz do Discord primeiro.');
-    const permissions = channel.permissionsFor(guild.members.me);
+    const permissions = channel.permissionsFor(
+      guild.members.me || this.client.user!.id,
+    );
     if (
       !permissions?.has([
         PermissionsBitField.Flags.ViewChannel,
@@ -91,8 +110,9 @@ export class DiscordGateway {
       );
     return channel.id;
   }
-  async connect(guildId, channelId) {
+  async connect(guildId: string, channelId: string): Promise<VoiceSession> {
     const guild = this.client.guilds.cache.get(guildId);
+    if (!guild) throw new MusicError(403, 'Servidor indisponível.');
     const connection = joinVoiceChannel({
       guildId,
       channelId,
@@ -100,7 +120,9 @@ export class DiscordGateway {
       selfDeaf: true,
       selfMute: false,
     });
-    const active = { channel: channelId };
+    const active: { channel: string; disconnected?: () => void } = {
+      channel: channelId,
+    };
     connection.on('error', () => active.disconnected?.());
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 20000);

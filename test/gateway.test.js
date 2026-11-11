@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType } from 'discord.js';
-import { DiscordGateway } from '../src/discord-gateway.js';
+import { DiscordGateway } from '../src/discord/gateway.ts';
 test('autorização consulta o canal real e aceita apenas calls de voz com permissões', async (t) => {
   const gateway = new DiscordGateway({ emptyMs: 1000 });
   t.after(() => gateway.close());

@@ -8,6 +8,7 @@ export function configuration(env = process.env) {
   return {
     markovEnabled: env.MARKOV_ENABLED === 'true',
     markovChannel: env.MARKOV_CHANNEL_ID || '',
+    musicPath: env.MUSIC_DB_PATH || '/app/data/music.sqlite',
     markovPath: env.MARKOV_DB_PATH || '/app/data/markov.sqlite',
     token: env.DISCORD_BOT_TOKEN,
     secret: env.MUSIC_SHARED_SECRET,

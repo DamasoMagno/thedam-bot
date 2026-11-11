@@ -1,5 +1,6 @@
 export class MusicError extends Error {
-  constructor(status, message) {
+  readonly status: number;
+  constructor(status: number, message: string) {
     super(message);
     this.status = status;
   }

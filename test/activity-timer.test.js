@@ -1,91 +1,91 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createActivityTimer } from '../src/chat/activity-timer.js';
-
-function fixture(speakImpl) {
+import { createActivityTimer } from '../src/chat/activity-timer.ts';
+function fixture(random = () => 0, speak) {
   let time = 0,
-    active = true,
-    canceled = false;
-  const sent = [];
-  const timer = createActivityTimer({
+    enabled = true;
+  const sent = [],
+    scheduled = [],
+    canceled = [];
+  let timer;
+  timer = createActivityTimer({
     now: () => time,
-    enabled: () => active,
+    random,
+    enabled: () => enabled,
     speak: async (channel) => {
       sent.push(channel);
-      await speakImpl?.();
+      timer.noteReply();
+      await speak?.();
     },
-    schedule: () => ({ unref() {} }),
-    cancel: () => {
-      canceled = true;
+    schedule: (callback, delay) => {
+      const id = { callback, delay, unref() {} };
+      scheduled.push(id);
+      return id;
     },
+    cancel: (id) => canceled.push(id),
   });
   return {
     timer,
     sent,
-    setTime: (value) => {
-      time = value;
-    },
-    disable: () => {
-      active = false;
-    },
-    get canceled() {
-      return canceled;
+    scheduled,
+    canceled,
+    setTime: (value) => (time = value),
+    disable: () => (enabled = false),
+    activity: (count = 6) => {
+      for (let i = 0; i < count; i++)
+        timer.noteActivity('geral', i % 2 ? 'ana' : 'bia');
     },
   };
 }
-test('temporizador não fala sem atividade, espera cinco minutos e fica quieto após inatividade', async () => {
+test('conversa precisa estar movimentada e só uma resposta fica agendada', async () => {
   const f = fixture();
-  f.setTime(300000);
-  await f.timer.tick();
-  assert.equal(f.sent.length, 0);
-  f.timer.noteActivity('geral');
+  f.activity(5);
+  assert.equal(f.scheduled.length, 0);
+  f.timer.noteActivity('geral', 'bia');
+  assert.equal(f.scheduled.length, 1);
+  assert.equal(f.scheduled[0].delay, 120000);
+  f.activity(20);
+  assert.equal(f.scheduled.length, 1);
+  f.setTime(119000);
+  f.timer.noteActivity('geral', 'ana');
+  f.setTime(120000);
   await f.timer.tick();
   assert.deepEqual(f.sent, ['geral']);
-  f.setTime(301000);
-  f.timer.noteActivity('geral');
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
-  f.setTime(1000000);
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
   f.timer.close();
-  assert.equal(f.canceled, true);
 });
-test('respeita modo desativado, resposta recente e encerramento', async () => {
-  const f = fixture();
-  f.timer.noteActivity('geral');
+test('espera varia e silêncio cancela a resposta sem falar sozinho', async () => {
+  const f = fixture(() => 1);
+  f.activity();
+  assert.equal(f.scheduled[0].delay, 300000);
   f.setTime(300000);
-  f.timer.noteReply();
   await f.timer.tick();
   assert.equal(f.sent.length, 0);
-  f.setTime(360000);
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
-  f.disable();
-  f.setTime(660000);
-  f.timer.noteActivity('geral');
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
   f.timer.close();
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
 });
-test('não sobrepõe envios e não repete a tentativa no mesmo intervalo', async () => {
-  let release;
-  const f = fixture(
-    () =>
-      new Promise((resolve) => {
-        release = resolve;
-      }),
-  );
-  f.timer.noteActivity('geral');
-  f.setTime(300000);
-  const first = f.timer.tick();
+test('um único usuário não ativa espontaneidade e desligar cancela o envio', async () => {
+  const f = fixture();
+  for (let i = 0; i < 10; i++) f.timer.noteActivity('geral', 'ana');
+  assert.equal(f.scheduled.length, 0);
+  f.activity();
+  f.disable();
+  f.setTime(120000);
   await f.timer.tick();
-  assert.equal(f.sent.length, 1);
-  release();
-  await first;
-  await f.timer.tick();
-  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent.length, 0);
   f.timer.close();
+});
+test('responder por menção cancela resposta pendente e respeita intervalo mínimo', async () => {
+  const f = fixture();
+  f.activity();
+  f.timer.noteReply();
+  assert.equal(f.canceled.length, 1);
+  f.setTime(60000);
+  f.activity();
+  assert.equal(f.scheduled.length, 1);
+  f.setTime(120000);
+  f.activity();
+  assert.equal(f.scheduled.length, 2);
+  f.timer.close();
+  f.setTime(240000);
+  await f.timer.tick();
+  assert.equal(f.sent.length, 0);
 });

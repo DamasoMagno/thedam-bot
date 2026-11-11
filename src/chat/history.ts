@@ -1,4 +1,6 @@
-import { safeText } from './model.js';
+import type { ChatMessage } from './types.ts';
+import type { ChatStore } from './store.ts';
+import { safeText } from './model.ts';
 
 export const GENERAL_CHANNEL_ID = '1379585304029171805';
 export const AMIGOS_GUILD_ID = '1379585303295299714';
@@ -8,11 +10,25 @@ export async function importGeneralHistory({
   store,
   now = Date.now(),
   limit = 2000,
+}: {
+  channel: {
+    id: string;
+    guildId: string;
+    messages: {
+      fetch: (options: {
+        limit: number;
+        before?: string;
+      }) => Promise<Map<string, ChatMessage>>;
+    };
+  };
+  store: ChatStore;
+  now?: number;
+  limit?: number;
 }) {
   if (channel.id !== GENERAL_CHANNEL_ID || channel.guildId !== AMIGOS_GUILD_ID)
     throw new Error('Importação permitida somente no geral do Amigos.');
   const cutoff = now - 30 * 86400000;
-  let before,
+  let before: string | undefined,
     imported = 0,
     scanned = 0;
   while (imported < Math.min(limit, 2000)) {
@@ -21,13 +37,13 @@ export async function importGeneralHistory({
       ...(before ? { before } : {}),
     });
     if (!page.size) break;
-    let oldest;
+    let oldest: ChatMessage | undefined;
     for (const message of page.values()) {
       if (!oldest || BigInt(message.id) < BigInt(oldest.id)) oldest = message;
       scanned++;
       if (
         !Number.isFinite(message.createdTimestamp) ||
-        message.createdTimestamp < cutoff
+        message.createdTimestamp! < cutoff
       )
         continue;
       if (
@@ -44,7 +60,7 @@ export async function importGeneralHistory({
       imported++;
       if (imported >= Math.min(limit, 2000)) break;
     }
-    if (!oldest || oldest.id === before || oldest.createdTimestamp < cutoff) break;
+    if (!oldest || oldest.id === before || oldest.createdTimestamp! < cutoff) break;
     before = oldest.id;
   }
   return { imported, scanned };
