@@ -1,0 +1,10 @@
+.env
+.git
+node_modules
+test
+*.log
+
+.venv
+
+data
+*.sqlite*

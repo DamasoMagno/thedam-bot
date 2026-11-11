@@ -1,0 +1,27 @@
+services:
+  music-bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3031
+    ports:
+      - '127.0.0.1:3031:3031'
+    volumes:
+      - markov_data:/app/data
+    networks: [music]
+    init: true
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '2'
+
+networks:
+  music:
+    name: coffee-music
+
+volumes:
+  markov_data:
