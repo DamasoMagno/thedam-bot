@@ -124,3 +124,19 @@ test('comandos são registrados somente no Amigos sem substituir comandos de out
   assert.equal(commands.length, 7);
   assert.ok(commands.every(({ guild }) => guild === MUSIC_GUILD_ID));
 });
+
+test('novos nomes são claros e remover-musica abre a seleção correta', async () => {
+  const f = fixture(async () => ({
+    current: { title: 'Atual' },
+    queue: [{ title: 'Próxima', queueId: 'stable-id' }],
+  }));
+  f.interaction.commandName = 'dam';
+  f.interaction.options.getSubcommand = () => 'remover-musica';
+  await f.handler.handle(f.interaction);
+  assert.equal(f.calls[0][2], 'state');
+  assert.equal(
+    f.replies.at(-1).components[0].components[0].options[0].value,
+    'stable-id',
+  );
+  f.handler.close();
+});

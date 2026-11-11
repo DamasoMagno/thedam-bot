@@ -14,6 +14,8 @@ export function createAudioSource(
     config.ytdlp,
     [
       '--ignore-config',
+      '--compat-options',
+      'prefer-legacy-http-handler',
       '--no-cache-dir',
       '--no-warnings',
       '--js-runtimes',

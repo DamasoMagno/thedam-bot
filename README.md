@@ -40,15 +40,16 @@ Entre na call, digite `/dam` e escolha a ação:
   para escolher; link individual vai direto à fila. Playlists externas não são importadas.
 - **painel**: publica uma mensagem compartilhada com música atual, fila e botões.
   O painel é atualizado; as confirmações, buscas e erros ficam privados.
-- **fila / remover / embaralhar / duplicadas / repetir**: organização da reprodução.
-- **salvar**: guarda música atual + fila como playlist. Informe nome e categoria
+- **fila / remover-musica / embaralhar / limpar-duplicadas / repetir**: organização da reprodução.
+- **salvar-fila**: guarda música atual + fila como playlist. Informe nome e categoria
   (Rock, Eletrônica, Jogando, Relax...). Até 50 faixas são salvas por lista.
-- **criar / playlists**: criar lista vazia, selecionar uma lista, adicionar a música atual,
+- **criar-playlist / playlists**: criar lista vazia, selecionar uma lista, adicionar a música atual,
   tocar a lista ou excluir com confirmação. Criador e administradores podem editar.
-- **favoritos**: suas músicas salvas pelo botão Favoritar.
-- **historico**: últimas 50 reproduções do servidor, com opção de tocar novamente.
-- **status / ajuda**: diagnóstico e instruções. Status não exige estar em call.
+- **favoritas**: suas músicas salvas pelo botão Favoritar.
+- **recentes**: últimas 50 reproduções do servidor, com opção de tocar novamente.
+- **diagnostico / ajuda**: diagnóstico e instruções. Status não exige estar em call.
 
+Os controles `/dam pausar`, `/dam continuar`, `/dam pular` e `/dam parar` também estão disponíveis.
 Os atalhos `/tocar`, `/fila`, `/pausar`, `/continuar`, `/pular` e `/parar` continuam.
 Escolha o comando do **TheDam**, pois outros bots podem ter nomes iguais. Não há
 integração que chame o Jockie. O painel tem controles para o grupo e todas as ações
@@ -57,7 +58,8 @@ que alteram a reprodução verificam a call real do usuário novamente.
 Há uma fila por servidor (até 50 próximas músicas). Outra call não pode assumir a fila.
 Ao terminar, encerrar ou ficar 60 s sem ouvintes, o bot libera conexão e processos.
 Uma busca lenta não bloqueia parar; encerrar invalida os pedidos pendentes.
-A preparação do áudio depende da rede e da fonte; as mensagens indicam a etapa atual.
+O extrator usa o transporte HTTP compatível (`urllib`) para evitar falhas de resolução
+observadas no cliente padrão. A preparação do áudio depende da rede e da fonte; as mensagens indicam a etapa atual.
 
 **Spotify:** opcional, exige `SPOTIFY_CLIENT_ID` e `SPOTIFY_CLIENT_SECRET`. Ele fornece
 metadados: o áudio é buscado no YouTube, e a versão pode diferir. Sem credenciais,

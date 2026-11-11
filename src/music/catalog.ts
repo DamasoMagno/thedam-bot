@@ -73,6 +73,8 @@ export function runExtractor(
       binary,
       [
         '--ignore-config',
+        '--compat-options',
+        'prefer-legacy-http-handler',
         '--no-warnings',
         '--no-cache-dir',
         '--js-runtimes',

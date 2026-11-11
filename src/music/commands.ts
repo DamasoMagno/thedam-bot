@@ -26,7 +26,17 @@ const modeNames: Record<string, string> = {
   discreet: 'discreto',
   participative: 'mais participativo',
 };
+const commandNames: Record<string, string> = {
+  'salvar-fila': 'salvar',
+  'criar-playlist': 'criar',
+  favoritas: 'favoritos',
+  recentes: 'historico',
+  'remover-musica': 'remover',
+  'limpar-duplicadas': 'duplicadas',
+  diagnostico: 'status',
+};
 const aliases: Record<string, string> = {
+  remover: 'remove',
   fila: 'state',
   pausar: 'pause',
   continuar: 'resume',
@@ -71,7 +81,7 @@ export function createMusicCommands({
       return messagePayload(
         items.length
           ? 'Escolha uma playlist.'
-          : 'Nenhuma playlist salva. Use /dam salvar ou /dam criar.',
+          : 'Nenhuma playlist salva. Use /dam salvar-fila ou /dam criar-playlist.',
         selection('playlist', 'Escolher playlist', items, page),
       );
     }
@@ -151,11 +161,12 @@ export function createMusicCommands({
         lastRequests.delete(lastRequests.keys().next().value!);
       try {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        const name = command
+        const requestedName = command
           ? slash.commandName === 'dam'
             ? slash.options.getSubcommand()
             : slash.commandName
           : ('customId' in interaction ? interaction.customId : '').slice(4);
+        const name = commandNames[requestedName] || requestedName;
         const value = interaction.isStringSelectMenu()
           ? interaction.values[0]
           : undefined;
@@ -163,7 +174,7 @@ export function createMusicCommands({
         if (name === 'ajuda')
           return await interaction.editReply(
             messagePayload(
-              '**TheDam**\n`/dam tocar` nome ou link · `/dam painel` controles para o grupo\n`/dam playlists` listas por gênero · `/dam salvar` guarda a fila\n`/dam favoritos` · `/dam historico` · `/dam remover`\n`/dam conversa` configura o Markov (administradores) · `/dam status`',
+              '**TheDam**\n`/dam tocar` nome ou link · `/dam painel` controles para o grupo\n`/dam playlists` listas por gênero · `/dam salvar-fila` guarda a fila\n`/dam favoritas` · `/dam recentes` · `/dam remover-musica`\n`/dam conversa` configura o Markov (administradores) · `/dam diagnostico`',
             ),
           );
         if (name === 'status') {
@@ -182,7 +193,7 @@ export function createMusicCommands({
           if (!controller)
             throw new MusicError(
               503,
-              'Markov indisponível. Confira o Message Content Intent e /dam status.',
+              'Markov indisponível. Confira o Message Content Intent e /dam diagnostico.',
             );
           const mode = slash.options.getString('modo'),
             chaos = slash.options.getString('caos');
