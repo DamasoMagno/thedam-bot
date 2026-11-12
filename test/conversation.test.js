@@ -136,3 +136,54 @@ test('novas categorias reconhecem música e comida com acentos sem repetir GIFs'
     4,
   );
 });
+
+test('automático inicia sem mensagens e a opção de desligar sobrevive ao reinício', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const directory = mkdtempSync(join(tmpdir(), 'thedam-autonomous-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'chat.sqlite');
+  const sent = [],
+    scheduled = [];
+  let now = Date.now();
+  const channel = {
+    send: async (payload) => {
+      sent.push(payload);
+      return { id: 'reply' };
+    },
+  };
+  const client = new EventEmitter();
+  client.user = { id: '123456789012345678' };
+  const store = new ChatStore(path);
+  store.learn({ id: 'old', author: { id: 'ana' } }, 'o dragão abriu uma padaria');
+  const options = {
+    client,
+    channelId: 'geral',
+    guildId: 'amigos',
+    channel,
+    random: () => 0,
+    now: () => now,
+    activityOptions: {
+      schedule: (callback) => {
+        scheduled.push(callback);
+        return { unref() {} };
+      },
+      cancel: () => {},
+    },
+  };
+  const controller = createChatHandler({ ...options, store });
+  assert.equal(controller.status().mode, 'discreet');
+  assert.equal(scheduled.length, 1);
+  now += 120000;
+  scheduled[0]();
+  await new Promise(setImmediate);
+  assert.equal(sent.length, 1);
+  controller.configure(true, 'mention');
+  controller.close();
+  scheduled.length = 0;
+  const reopened = createChatHandler({ ...options, store: new ChatStore(path) });
+  assert.equal(reopened.status().mode, 'mention');
+  assert.equal(scheduled.length, 0);
+  reopened.close();
+});

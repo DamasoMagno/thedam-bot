@@ -1,9 +1,10 @@
+import { DEFAULT_REPLY_MEDIA_CHANCE } from '../config/constants.ts';
 import { generateConversationReply, recallMemory } from './conversation.ts';
 import { chooseReplyMedia } from './media.ts';
 import type { AiReplyService } from '../ai/reply-service.ts';
 import { createMentionQueue } from './mention-queue.ts';
 import type { Client } from 'discord.js';
-import type { ChatMessage, ChatReaction, ChatUser } from './types.ts';
+import type { ChatMessage, ChatReaction, ChatUser, ChatChannel } from './types.ts';
 import type { ChatStore } from './store.ts';
 import type { ActivityOptions } from './activity-timer.ts';
 import { PermissionsBitField } from 'discord.js';
@@ -20,7 +21,8 @@ export function createChatHandler({
   activityOptions = {},
   onGenerated,
   ai,
-  mediaChance = 0.25,
+  mediaChance = DEFAULT_REPLY_MEDIA_CHANCE,
+  channel,
 }: {
   client: Client;
   store: ChatStore;
@@ -31,9 +33,15 @@ export function createChatHandler({
   generate?: typeof generateText;
   activityOptions?: Partial<ActivityOptions>;
   mediaChance?: number;
+  channel?: ChatChannel;
   ai?: AiReplyService;
   onGenerated?: (text: string, message: ChatMessage) => Promise<unknown>;
 }) {
+  if (store.setting('autonomousVersion') !== '1') {
+    store.setting('auto', 'timer');
+    store.setting('conversationMode', store.setting('conversationMode') || 'discreet');
+    store.setting('autonomousVersion', '1');
+  }
   let lastReply = 0;
   let lastSpeaker: ChatMessage | undefined;
   const recent = new Map<string, { text: string; at: number }>(),
@@ -95,8 +103,9 @@ export function createChatHandler({
     maxDelayMs: 300000,
     profile: () => store.setting('conversationMode') || 'discreet',
     ...activityOptions,
-    enabled: () => ['timer', 'true', 'always'].includes(store.setting('auto') || ''),
-    speak: async (channel) => {
+    enabled: () =>
+      ['timer', 'true', 'always'].includes(store.setting('auto') || 'timer'),
+    speak: async (channel, isCurrent) => {
       const text =
         (await ai?.maybeReply(lastSpeaker?.content || '')) ||
         generateConversationReply(store.texts(), lastSpeaker?.content || '', {
@@ -107,13 +116,20 @@ export function createChatHandler({
           maxLength: 160,
           excluded: [...rejected, ...[...recent.values()].map((item) => item.text)],
         });
-      if (!text || text.length > 160 || !normalizeText(text) || rejected.has(text))
+      if (
+        !isCurrent() ||
+        !text ||
+        text.length > 160 ||
+        !normalizeText(text) ||
+        rejected.has(text)
+      )
         return;
       const result = await send({ channel }, text);
       rememberReply(result, text);
       if (lastSpeaker) dispatchGeneratedMusic(text, lastSpeaker);
     },
   });
+  if (channel) activityTimer.start(channel);
   const guarded =
     <Args extends unknown[]>(fn: (...args: Args) => unknown) =>
     (...args: Args) =>
@@ -171,12 +187,12 @@ export function createChatHandler({
       if (state === 'temporizador')
         return send(
           message,
-          'Vou participar ocasionalmente quando a conversa estiver movimentada.',
+          'Vou falar espontaneamente no geral, mesmo sem menções ou conversa ativa.',
         );
       if (state === 'sempre')
         return send(
           message,
-          'Vou participar ocasionalmente, sem responder a cada mensagem.',
+          'Vou falar espontaneamente no geral, sem precisar de menções.',
         );
       return send(
         message,
@@ -334,7 +350,7 @@ export function createChatHandler({
     status() {
       return {
         enabled: true,
-        mode: !['timer', 'true', 'always'].includes(store.setting('auto') || '')
+        mode: !['timer', 'true', 'always'].includes(store.setting('auto') || 'timer')
           ? 'mention'
           : store.setting('conversationMode') || 'discreet',
         chaos: store.setting('chaos') !== 'false',

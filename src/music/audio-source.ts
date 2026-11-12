@@ -1,3 +1,4 @@
+import { trustedAudioLocation, type AudioLocation } from './audio-location-cache.ts';
 import { Transform } from 'node:stream';
 import type { Track } from './types.ts';
 import type { configuration } from '../config/index.ts';
@@ -8,8 +9,23 @@ export function createAudioSource(
   config: ReturnType<typeof configuration>,
   track: Track,
   onError: (error: MusicError) => void,
+  {
+    onReady,
+    location,
+  }: { onReady?: (elapsedMs: number) => void; location?: AudioLocation } = {},
 ) {
+  const startedAt = performance.now();
   if (!youtubeId(track.id)) throw new MusicError(400, 'Música inválida.');
+  if (location) {
+    const trusted = trustedAudioLocation(
+      location.url,
+      location.headers,
+      location.format,
+    );
+    if (!trusted) throw new MusicError(400, 'Fonte de áudio inválida.');
+    location = trusted;
+  }
+  const cachedFormat = location?.format;
   const downloader = spawn(
     config.ytdlp,
     [
@@ -18,18 +34,38 @@ export function createAudioSource(
       'prefer-legacy-http-handler',
       '--no-cache-dir',
       '--no-warnings',
+      '--no-progress',
       '--js-runtimes',
       'node',
       '--no-playlist',
-      '-f',
-      'bestaudio/best',
-      '-o',
-      '-',
-      '--',
-      'https://www.youtube.com/watch?v=' + track.id,
+      ...(cachedFormat
+        ? ['--load-info-json', '-', '-o', '-']
+        : [
+            '-f',
+            'bestaudio/best',
+            '-o',
+            '-',
+            '--',
+            'https://www.youtube.com/watch?v=' + track.id,
+          ]),
     ],
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+    { stdio: ['pipe', 'pipe', 'pipe'] },
   );
+  downloader.stdin.on('error', () => {});
+  if (cachedFormat && location)
+    downloader.stdin.end(
+      JSON.stringify({
+        ...cachedFormat,
+        id: track.id,
+        title: track.title,
+        url: location.url,
+        http_headers: location.headers,
+        extractor: 'youtube',
+        extractor_key: 'Youtube',
+        webpage_url: 'https://www.youtube.com/watch?v=' + track.id,
+      }),
+    );
+  else downloader.stdin.end();
   const encoder = spawn(
     config.ffmpeg,
     [
@@ -67,6 +103,7 @@ export function createAudioSource(
   encoder.stderr.on('data', diagnose);
   const meter = new Transform({
     transform(chunk, _encoding, callback) {
+      if (!received) onReady?.(Math.round(performance.now() - startedAt));
       received = true;
       lastData = Date.now();
       callback(null, chunk);

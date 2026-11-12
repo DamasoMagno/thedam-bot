@@ -2,7 +2,7 @@ import type { Track, PlaylistSummary, Playlist, LibraryEntry } from './types.ts'
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { MusicError } from '../shared/music-error.ts';
 
 export class LibraryRepository {
@@ -29,16 +29,51 @@ export class LibraryRepository {
       .prepare('SELECT * FROM music_playlists WHERE guild=? AND id=?')
       .get(guild, id) as unknown as Omit<Playlist, 'tracks'> | undefined;
     if (!row) throw new MusicError(404, 'Playlist não encontrada.');
+    const tracks = this.db
+      .prepare(
+        'SELECT track FROM music_playlist_tracks WHERE playlist=? ORDER BY position',
+      )
+      .all(id)
+      .map((row) => JSON.parse(String(row.track)) as Track);
     return {
       ...row,
-      tracks: this.db
-        .prepare(
-          'SELECT track FROM music_playlist_tracks WHERE playlist=? ORDER BY position',
-        )
-        .all(id)
-        .map((row) => JSON.parse(String(row.track)) as Track),
+      tracks,
+      revision: createHash('sha256')
+        .update(JSON.stringify(tracks))
+        .digest('hex')
+        .slice(0, 16),
     };
   }
+  removeTrack(
+    guild: string,
+    user: string,
+    id: string,
+    position: number,
+    revision: string,
+    admin = false,
+  ) {
+    const list = this.assertCanEdit(guild, user, id, admin);
+    if (!revision || revision !== list.revision)
+      throw new MusicError(
+        409,
+        'A playlist mudou. Abra a lista novamente antes de remover.',
+      );
+    if (!Number.isInteger(position) || position < 0 || position >= list.tracks.length)
+      throw new MusicError(409, 'Esta música não está mais na playlist.');
+    const remaining = list.tracks.filter((_track, index) => index !== position);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('DELETE FROM music_playlist_tracks WHERE playlist=?').run(id);
+      const insert = this.db.prepare('INSERT INTO music_playlist_tracks VALUES(?,?,?)');
+      remaining.forEach((track, index) => insert.run(id, index, JSON.stringify(track)));
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return this.playlist(guild, id);
+  }
+
   createPlaylist(
     guild: string,
     user: string,
@@ -86,24 +121,49 @@ export class LibraryRepository {
     }
     return this.playlist(guild, id);
   }
-  addToPlaylist(guild: string, user: string, id: string, track: Track, admin = false) {
+  assertCanEdit(guild: string, user: string, id: string, admin = false) {
     const list = this.playlist(guild, id);
     if (list.owner !== user && !admin)
       throw new MusicError(
         403,
         'Só o criador ou um administrador pode editar a playlist.',
       );
-    if (list.tracks.length >= 50) throw new MusicError(409, 'A playlist está cheia.');
-    const clean = this.cleanTrack(track);
-    if (
-      list.tracks.some(
-        (item) => item.id === clean.id && item.provider === clean.provider,
-      )
-    )
-      throw new MusicError(409, 'Esta música já está na playlist.');
-    this.db
-      .prepare('INSERT INTO music_playlist_tracks VALUES(?,?,?)')
-      .run(id, list.tracks.length, JSON.stringify(clean));
+    return list;
+  }
+  addToPlaylist(guild: string, user: string, id: string, track: Track, admin = false) {
+    return this.addTracks(guild, user, id, [track], admin);
+  }
+  addTracks(guild: string, user: string, id: string, tracks: Track[], admin = false) {
+    const list = this.assertCanEdit(guild, user, id, admin);
+    const existing = new Set(
+      list.tracks.map((track) => track.provider + ':' + track.id),
+    );
+    const additions = tracks
+      .map((track) => this.cleanTrack(track))
+      .filter((track) => {
+        const key = track.provider + ':' + track.id;
+        if (existing.has(key)) return false;
+        existing.add(key);
+        return true;
+      });
+    if (!additions.length)
+      throw new MusicError(409, 'Esta música ou estas músicas já estão na playlist.');
+    if (list.tracks.length + additions.length > 50)
+      throw new MusicError(
+        409,
+        'Cada playlist aceita até 50 músicas. Nada foi adicionado.',
+      );
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const insert = this.db.prepare('INSERT INTO music_playlist_tracks VALUES(?,?,?)');
+      additions.forEach((track, offset) =>
+        insert.run(id, list.tracks.length + offset, JSON.stringify(track)),
+      );
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     return this.playlist(guild, id);
   }
   deletePlaylist(guild: string, user: string, id: string, admin = false) {

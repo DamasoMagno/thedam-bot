@@ -1,12 +1,21 @@
+import {
+  AudioLocationCache,
+  trustedAudioLocation,
+  type AudioFormat,
+} from './audio-location-cache.ts';
+import { SpotifyPlaylists } from './spotify-playlists.ts';
+import { SearchCache } from './search-cache.ts';
 import type { Track } from './types.ts';
 import type { configuration } from '../config/index.ts';
 type Config = ReturnType<typeof configuration>;
-interface ExtractedTrack {
+interface ExtractedTrack extends AudioFormat {
   id: string;
   title?: string;
   channel?: string;
   uploader?: string;
   duration?: number;
+  url?: string;
+  http_headers?: Record<string, string>;
 }
 interface ExtractedResult extends Partial<ExtractedTrack> {
   entries?: ExtractedTrack[];
@@ -97,13 +106,29 @@ export function runExtractor(
   );
 }
 export class Catalog {
+  private cache: SearchCache;
+  private audioLocations = new AudioLocationCache();
+  private playlists: SpotifyPlaylists;
+  private searches = { hits: 0, misses: 0, lastDurationMs: 0 };
   config!: Config;
   extract!: typeof runExtractor;
   fetch!: typeof fetch;
   token: { until: number; value: string } | null;
-  constructor(config: Config, { extract = runExtractor, fetchImpl = fetch } = {}) {
+  constructor(
+    config: Config,
+    { extract = runExtractor, fetchImpl = fetch, cache = new SearchCache() } = {},
+  ) {
     Object.assign(this, { config, extract, fetch: fetchImpl });
     this.token = null;
+    this.cache = cache;
+    this.playlists = new SpotifyPlaylists(
+      {
+        id: config.spotifyId,
+        secret: config.spotifySecret,
+        refreshToken: config.spotifyRefreshToken,
+      },
+      fetchImpl,
+    );
   }
   async spotifyToken() {
     if (!this.config.spotifyId || !this.config.spotifySecret)
@@ -134,7 +159,43 @@ export class Catalog {
     };
     return this.token.value;
   }
+  importPlaylist(query: unknown, { signal }: { signal?: AbortSignal } = {}) {
+    return this.playlists.import(query, signal);
+  }
+  searchStatus() {
+    return { ...this.searches, entries: this.cache.size };
+  }
   async search(
+    query: unknown,
+    provider?: string,
+    { signal }: { signal?: AbortSignal } = {},
+  ): Promise<Track[]> {
+    signal?.throwIfAborted();
+    const parsed = parseQuery(query, provider);
+    const key = JSON.stringify([
+      parsed.provider,
+      parsed.video ||
+        parsed.track ||
+        parsed.query?.toLocaleLowerCase('pt-BR').replace(/\s+/g, ' '),
+    ]);
+    const start = performance.now();
+    const cached = this.cache.get(key);
+    if (cached) {
+      this.searches.hits++;
+      this.searches.lastDurationMs = Math.round(performance.now() - start);
+      return cached;
+    }
+    this.searches.misses++;
+    try {
+      const tracks = await this.searchUncached(query, provider, { signal });
+      signal?.throwIfAborted();
+      this.cache.set(key, tracks);
+      return tracks;
+    } finally {
+      this.searches.lastDurationMs = Math.round(performance.now() - start);
+    }
+  }
+  private async searchUncached(
     query: unknown,
     provider?: string,
     { signal }: { signal?: AbortSignal } = {},
@@ -172,9 +233,21 @@ export class Catalog {
       : 'ytsearch5:' + parsed.query;
     const data = await this.extract(
       this.config.ytdlp,
-      ['--dump-single-json', '--flat-playlist', '--no-playlist', '--', target],
+      [
+        '--dump-single-json',
+        ...(parsed.video
+          ? ['-f', 'bestaudio/best', '--skip-download']
+          : ['--flat-playlist']),
+        '--no-playlist',
+        '--',
+        target,
+      ],
       { signal },
     );
+    if (parsed.video && data.id === parsed.video) {
+      const location = trustedAudioLocation(data.url, data.http_headers, data);
+      if (location) this.audioLocations.set(parsed.video, location);
+    }
     return (data.entries || [data])
       .filter((t): t is ExtractedTrack => youtubeId(t.id))
       .slice(0, 5)
@@ -185,6 +258,38 @@ export class Catalog {
         artist: String(t.channel || t.uploader || '').slice(0, 160),
         duration: Number.isFinite(t.duration) ? Math.round(t.duration!) : null,
       }));
+  }
+  async audioLocation(track: Track, { signal }: { signal?: AbortSignal } = {}) {
+    signal?.throwIfAborted();
+    if (track.provider !== 'youtube' || !youtubeId(track.id))
+      throw new MusicError(400, 'Música inválida.');
+    const cached = this.audioLocations.get(track.id);
+    if (cached) return cached;
+    const data = await this.extract(
+      this.config.ytdlp,
+      [
+        '--dump-single-json',
+        '--skip-download',
+        '--no-playlist',
+        '-f',
+        'bestaudio/best',
+        '--',
+        'https://www.youtube.com/watch?v=' + track.id,
+      ],
+      { signal },
+    );
+    signal?.throwIfAborted();
+    const location =
+      data.id === track.id
+        ? trustedAudioLocation(data.url, data.http_headers, data)
+        : null;
+    if (!location)
+      throw new MusicError(502, 'Não foi possível obter uma fonte segura de áudio.');
+    this.audioLocations.set(track.id, location);
+    return location;
+  }
+  invalidateAudio(id: string) {
+    this.audioLocations.delete(id);
   }
   async playable(track: Track, options: { signal?: AbortSignal } = {}): Promise<Track> {
     if (track.provider === 'youtube') return track;

@@ -1,3 +1,4 @@
+import { receiveNextSpeech } from '../voice/receive.ts';
 import type { configuration } from '../config/index.ts';
 import type { VoiceSession } from '../music/types.ts';
 import {
@@ -110,7 +111,11 @@ export class DiscordGateway {
       );
     return channel.id;
   }
-  async connect(guildId: string, channelId: string): Promise<VoiceSession> {
+  async connect(
+    guildId: string,
+    channelId: string,
+    signal?: AbortSignal,
+  ): Promise<VoiceSession> {
     const guild = this.client.guilds.cache.get(guildId);
     if (!guild) throw new MusicError(403, 'Servidor indisponível.');
     const connection = joinVoiceChannel({
@@ -125,7 +130,11 @@ export class DiscordGateway {
     };
     connection.on('error', () => active.disconnected?.());
     try {
-      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+      await entersState(
+        connection,
+        VoiceConnectionStatus.Ready,
+        signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : 20000,
+      );
     } catch {
       connection.destroy();
       throw new MusicError(502, 'O bot não conseguiu entrar na call.');
@@ -141,7 +150,33 @@ export class DiscordGateway {
         entersState(connection, VoiceConnectionStatus.Connecting, 5000),
       ]).catch(() => active.disconnected?.());
     });
+    const voiceListeners = new Set<() => void>();
+    let destroying = false;
     return {
+      listen: (user, onAudio) => {
+        let disposed = false;
+        let detach = () => {};
+        const dispose = () => {
+          if (disposed) return;
+          disposed = true;
+          detach();
+          voiceListeners.delete(dispose);
+          if (!voiceListeners.size && !destroying)
+            connection.rejoin({ channelId, selfMute: false, selfDeaf: true });
+        };
+        voiceListeners.add(dispose);
+        connection.rejoin({ channelId, selfMute: false, selfDeaf: false });
+        detach = receiveNextSpeech(connection.receiver, user, (pcm) => {
+          dispose();
+          onAudio(pcm);
+        });
+        return dispose;
+      },
+      onPlaybackState: (callback) => {
+        player.on('stateChange', (_before, after) =>
+          callback(after.status === AudioPlayerStatus.Playing),
+        );
+      },
       onIdle: (callback) => player.on(AudioPlayerStatus.Idle, callback),
       onError: (callback) => player.on('error', callback),
       onDisconnect: (callback) => {
@@ -153,6 +188,8 @@ export class DiscordGateway {
       resume: () => player.unpause(),
       stop: () => player.stop(true),
       destroy: () => {
+        destroying = true;
+        for (const dispose of voiceListeners) dispose();
         this.connections.delete(guildId);
         clearTimeout(this.emptyTimers.get(guildId));
         this.emptyTimers.delete(guildId);

@@ -44,3 +44,40 @@ test('favoritas são pessoais, idempotentes e o histórico é limitado a cinquen
   );
   db.close();
 });
+
+test('remover faixa protege permissões e revisões antigas, reorganiza posições e permite adicionar depois', () => {
+  const db = new LibraryRepository(':memory:');
+  const list = db.createPlaylist('amigos', 'ana', 'Lista', '', [
+    track,
+    { ...track, id: 'lmnopqrstuv' },
+    { ...track, id: '12345678901' },
+  ]);
+  assert.throws(
+    () => db.removeTrack('amigos', 'bia', list.id, 1, list.revision),
+    /criador/,
+  );
+  const remaining = db.removeTrack('amigos', 'ana', list.id, 1, list.revision);
+  assert.deepEqual(
+    remaining.tracks.map((track) => track.id),
+    ['abcdefghijk', '12345678901'],
+  );
+  assert.throws(
+    () => db.removeTrack('amigos', 'ana', list.id, 1, list.revision),
+    /mudou/,
+  );
+  const appended = db.addToPlaylist('amigos', 'ana', list.id, {
+    ...track,
+    id: 'lmnopqrstuv',
+  });
+  assert.equal(appended.tracks.length, 3);
+  assert.throws(
+    () => db.removeTrack('outro', 'ana', list.id, 0, appended.revision),
+    /não encontrada/,
+  );
+  db.deletePlaylist('amigos', 'ana', list.id);
+  assert.equal(
+    db.db.prepare('SELECT COUNT(*) AS n FROM music_playlist_tracks').get().n,
+    0,
+  );
+  db.close();
+});

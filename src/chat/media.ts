@@ -1,9 +1,10 @@
+import { DEFAULT_REPLY_MEDIA_CHANCE } from '../config/constants.ts';
 import { gifCatalog, gifCategoryPatterns, type GifCategory } from './gif-catalog.ts';
 
 export function createReplyMediaPicker() {
   const recent: string[] = [];
   return ({
-    chance = 0.25,
+    chance = DEFAULT_REPLY_MEDIA_CHANCE,
     random = Math.random,
     context = '',
   }: { chance?: number; random?: () => number; context?: string } = {}) => {

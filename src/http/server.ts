@@ -35,7 +35,7 @@ export function createServer({
       if (request.url === '/health' && request.method === 'GET')
         return json(ready() ? 200 : 503, { ready: ready() });
       const match =
-        /^\/v1\/guilds\/([1-9]\d{16,19})\/(search|state|enqueue|pause|resume|skip|stop|status|playlists|favorites|history|savePlaylist|createPlaylist|addToPlaylist|deletePlaylist|playlistEnqueue|favoriteEnqueue|historyEnqueue|favorite|remove|shuffle|deduplicate|repeat)$/.exec(
+        /^\/v1\/guilds\/([1-9]\d{16,19})\/(search|state|enqueue|pause|resume|skip|stop|status|playlists|favorites|history|savePlaylist|createPlaylist|addToPlaylist|deletePlaylist|playlistEnqueue|favoriteEnqueue|historyEnqueue|favorite|playlist|playlistRemoveTrack|playlistSearch|playlistAddTrack|importPlaylist|remove|move|shuffle|deduplicate|repeat)$/.exec(
           request.url || '',
         );
       if (request.method !== 'POST' || !match)

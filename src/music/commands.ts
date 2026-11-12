@@ -1,3 +1,12 @@
+import type { LastFmService } from '../lastfm/service.ts';
+import { handleLastFmInteraction } from '../lastfm/interactions.ts';
+import type { VoiceController } from '../voice/controller.ts';
+import { musicInputModal, libraryInputModal } from './input-modals.ts';
+import { playlistListPayload } from './playlist-presentation.ts';
+import {
+  playlistInputModal,
+  handlePlaylistInteraction,
+} from './playlist-interactions.ts';
 import { GENERAL_CHANNEL_ID } from '../config/constants.ts';
 import type { ChatMessage } from '../chat/types.ts';
 import type {
@@ -15,6 +24,7 @@ import { AMIGOS_GUILD_ID } from '../config/constants.ts';
 import { musicCommands, registerMusicCommands } from './command-definitions.ts';
 import {
   MusicPanels,
+  queuePayload,
   messagePayload,
   safeTitle,
   selection,
@@ -36,6 +46,8 @@ const commandNames: Record<string, string> = {
   'remover-musica': 'remover',
   'limpar-duplicadas': 'duplicadas',
   diagnostico: 'status',
+  musica: 'painel',
+  musicInput: 'tocar',
 };
 const aliases: Record<string, string> = {
   remover: 'remove',
@@ -56,14 +68,22 @@ export function createMusicCommands({
   chat = () => undefined,
   diagnostics = () => ({}),
   now = Date.now,
+  voice,
+  lastfm,
 }: {
   client: Client;
   service: PlayerService;
   chat?: () => ReturnType<typeof createChatHandler> | undefined;
   diagnostics?: () => Diagnostics;
   now?: () => number;
+  voice?: VoiceController;
+  lastfm?: LastFmService;
 }) {
-  const panels = new MusicPanels({ service });
+  const panels = new MusicPanels({
+    service,
+    voiceAvailable: Boolean(voice),
+    lastfmAvailable: Boolean(lastfm),
+  });
   const pending = new Set<string>(),
     lastRequests = new Map<string, number>();
   async function choices(interaction: Interaction, action: string, page = 0) {
@@ -72,19 +92,27 @@ export function createMusicCommands({
     const state = await service.run(
       guild,
       user,
-      ['remove', 'state'].includes(action) ? 'state' : action,
+      ['remove', 'state'].includes(action)
+        ? 'state'
+        : ['playPlaylist', 'saveCurrent'].includes(action)
+          ? 'playlists'
+          : action,
     );
-    if (action === 'playlists') {
+    if (['playlists', 'playPlaylist', 'saveCurrent'].includes(action)) {
       const items = (state.playlists || []).map((list) => ({
         label: list.name,
         description: `${list.category} · ${list.count} música(s)`,
         value: list.id,
       }));
-      return messagePayload(
-        items.length
-          ? 'Escolha uma playlist.'
-          : 'Nenhuma playlist salva. Use /dam salvar-fila ou /dam criar-playlist.',
-        selection('playlist', 'Escolher playlist', items, page),
+      if (action === 'saveCurrent')
+        return messagePayload(
+          'Escolha onde salvar a música atual.',
+          selection('playlistSaveCurrent', 'Salvar na playlist', items, page),
+        );
+      return playlistListPayload(
+        state.playlists || [],
+        page,
+        action === 'playPlaylist',
       );
     }
     if (action === 'history' || action === 'favorites') {
@@ -104,34 +132,15 @@ export function createMusicCommands({
         selection(action, 'Escolher música', items, page),
       );
     }
-    const text = state.current
-      ? `**${state.paused ? 'Pausada' : 'Tocando'}:** ${safeTitle(state.current.title)}\n${
-          (state.queue || [])
-            .slice(page * 20, page * 20 + 20)
-            .map(
-              (track, index) =>
-                `${page * 20 + index + 1}. ${safeTitle(track.title, 35)}`,
-            )
-            .join('\n') || 'Nenhuma música na fila.'
-        }`
-      : 'Nenhuma música está tocando.';
-    return messagePayload(
-      text,
-      selection(
-        'remove',
-        'Remover música da fila',
-        (state.queue || []).map((track) => ({
-          label: track.title,
-          value: track.queueId!,
-        })),
-        page,
-      ),
-    );
+    return queuePayload(state, { page, removeOnly: action === 'remove' });
   }
   async function handle(interaction: Interaction) {
     const command = interaction.isChatInputCommand();
     const slash = interaction as ChatInputCommandInteraction;
-    const component = interaction.isButton() || interaction.isStringSelectMenu();
+    const component =
+      interaction.isButton() ||
+      interaction.isStringSelectMenu() ||
+      interaction.isModalSubmit?.();
     if (command && !musicCommands.some((item) => item.name === slash.commandName))
       return;
     if (
@@ -143,18 +152,37 @@ export function createMusicCommands({
     if (
       !interaction.isChatInputCommand() &&
       !interaction.isButton() &&
-      !interaction.isStringSelectMenu()
+      !interaction.isStringSelectMenu() &&
+      !interaction.isModalSubmit?.()
     )
       return;
     try {
       if (interaction.guildId !== MUSIC_GUILD_ID)
         throw new MusicError(403, 'Música disponível somente no servidor Amigos.');
+      if (interaction.isButton() && interaction.customId === 'dam:voiceCancel') {
+        if (!voice) throw new MusicError(503, 'Comando por voz indisponível.');
+        await interaction.deferUpdate();
+        voice.cancel(interaction.user.id);
+        await interaction.editReply(
+          messagePayload('Comando por voz cancelado. A captura foi encerrada.'),
+        );
+        return;
+      }
+      const privateNavigation =
+        !command &&
+        (interaction.isButton() ||
+          interaction.isStringSelectMenu() ||
+          (interaction.isModalSubmit?.() && interaction.isFromMessage?.())) &&
+        Boolean(interaction.message?.flags?.has(MessageFlags.Ephemeral)) &&
+        /^dam:(?:state$|queueTrack$|moveUp:|moveDown:|queueRemove:|page:|playlist|libraryInput:|playlists$|deleteAsk:|deletePlaylist:|cancel$|shuffle$|deduplicate$|repeatToggle$|stop$)/u.test(
+          interaction.customId,
+        );
       const user = interaction.user.id,
         guild = interaction.guildId!;
       if (
         pending.has(user) ||
         pending.size >= 20 ||
-        now() - (lastRequests.get(user) ?? -Infinity) < 1500
+        now() - (lastRequests.get(user) ?? -Infinity) < (privateNavigation ? 300 : 1500)
       )
         throw new MusicError(429, 'Aguarde um instante antes do próximo comando.');
       pending.add(user);
@@ -162,21 +190,80 @@ export function createMusicCommands({
       if (lastRequests.size > 500)
         lastRequests.delete(lastRequests.keys().next().value!);
       try {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        if (interaction.isButton()) {
+          const id = interaction.customId.slice(4);
+          if (id === 'addMusic') {
+            await interaction.showModal(musicInputModal());
+            return;
+          }
+          const libraryActions: Record<
+            string,
+            'createPlaylist' | 'importPlaylist' | 'savePlaylist'
+          > = {
+            playlistCreate: 'createPlaylist',
+            playlistImport: 'importPlaylist',
+            saveQueue: 'savePlaylist',
+          };
+          if (libraryActions[id]) {
+            await interaction.showModal(libraryInputModal(libraryActions[id]));
+            return;
+          }
+        }
+        if (
+          interaction.isButton() &&
+          interaction.customId.startsWith('dam:playlistAdd:')
+        ) {
+          await interaction.showModal(
+            playlistInputModal(interaction.customId.split(':')[2]),
+          );
+          return;
+        }
+        if (privateNavigation && !interaction.isChatInputCommand())
+          await interaction.deferUpdate();
+        else await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const requestedName = command
           ? slash.commandName === 'dam'
             ? slash.options.getSubcommand()
             : slash.commandName
           : ('customId' in interaction ? interaction.customId : '').slice(4);
-        const name = commandNames[requestedName] || requestedName;
+        let name = commandNames[requestedName] || requestedName;
         const value = interaction.isStringSelectMenu()
           ? interaction.values[0]
           : undefined;
+        if (
+          name === 'more' &&
+          value &&
+          [
+            'favorite',
+            'saveCurrent',
+            'favorites',
+            'history',
+            'stop',
+            'lastfm',
+          ].includes(value)
+        )
+          name = value;
         let action = aliases[name] || name;
+        if (await handleLastFmInteraction(interaction, name, value, service, lastfm))
+          return;
+        if (name === 'voiceCommand') {
+          if (!voice)
+            throw new MusicError(503, 'Comando por voz indisponível. Use /tocar.');
+          await voice.begin(guild, user, (content, cancellable) =>
+            interaction.editReply(
+              messagePayload(
+                content,
+                cancellable ? [row(button('Cancelar escuta', 'voiceCancel', 4))] : [],
+              ),
+            ),
+          );
+          return;
+        }
+        if (await handlePlaylistInteraction(interaction, service, name)) return;
         if (name === 'ajuda')
           return await interaction.editReply(
             messagePayload(
-              '**TheDam**\n`/dam tocar` nome ou link · `/dam painel` controles para o grupo\n`/dam playlists` listas por gênero · `/dam salvar-fila` guarda a fila\n`/dam favoritas` · `/dam recentes` · `/dam remover-musica`\n`/dam frase` · `/dam perolas` · `/dam perola-da-semana`\n`/dam conversa` configura o Markov (administradores) · `/dam diagnostico`',
+              '**TheDam**\n`/musica` abre o painel · `/tocar` nome ou link\n`/playlists` cria, importa e organiza listas · `/fila` organiza as próximas músicas\n`/pausar` · `/continuar` · `/pular` · `/parar`\n`/dam frase` · `/dam perolas` · `/dam perola-da-semana`\n`/dam conversa` configura o Markov (administradores) · `/dam diagnostico`',
             ),
           );
         if (['frase', 'perolas', 'perola-da-semana', 'quote'].includes(name)) {
@@ -232,7 +319,7 @@ export function createMusicCommands({
           const status = await service.run(guild, user, 'status');
           return await interaction.editReply(
             messagePayload(
-              `**Estado do TheDam**\nDiscord: ${client.isReady?.() ? 'conectado' : 'reconectando'}\nComandos: ${status.commands === false ? 'indisponíveis' : 'disponíveis'}\nSpotify: ${status.spotify ? 'configurado' : 'não configurado'}\nMarkov: ${modeNames[chat()?.status().mode || ''] || status.markovReason || 'desativado'}\nIA: ${chat()?.status().ai?.status || 'desativada'}\n${status.audioError ? 'Última falha: ' + status.audioError : 'Sem falha de áudio registrada.'}`,
+              `**Estado do TheDam**\nDiscord: ${client.isReady?.() ? 'conectado' : 'reconectando'}\nComandos: ${status.commands === false ? 'indisponíveis' : 'disponíveis'}\nSpotify: ${status.spotify ? 'configurado' : 'não configurado'}\nMarkov: ${modeNames[chat()?.status().mode || ''] || status.markovReason || 'desativado'}\nIA: ${chat()?.status().ai?.status || 'desativada'}\n${status.search ? `Busca: ${status.search.lastDurationMs} ms · ${status.search.hits} reaproveitada(s)\n` : ''}${status.audioStartupMs !== undefined ? `Primeiro áudio: ${status.audioStartupMs} ms\n` : ''}${status.audioError ? 'Última falha: ' + status.audioError : 'Sem falha de áudio registrada.'}`,
             ),
           );
         }
@@ -260,7 +347,9 @@ export function createMusicCommands({
           );
         }
         if (name === 'tocar') {
-          const query = slash.options.getString('musica', true);
+          const query = interaction.isModalSubmit?.()
+            ? interaction.fields.getTextInputValue('query')
+            : slash.options.getString('musica', true);
           await interaction.editReply(messagePayload('Buscando música…'));
           const result = await service.run(guild, user, 'search', {
             query,
@@ -311,6 +400,39 @@ export function createMusicCommands({
             ),
           );
         }
+        if (name === 'playPlaylist' && value) {
+          await service.run(guild, user, 'playlistEnqueue', { id: value });
+          await panels.show(guild, interaction.channel as SendableChannels);
+          return await interaction.editReply(
+            messagePayload('Playlist adicionada à fila da call.'),
+          );
+        }
+        if (name === 'quickPlaylists' || name === 'saveCurrent')
+          return await interaction.editReply(
+            await choices(
+              interaction,
+              name === 'saveCurrent' ? 'saveCurrent' : 'playPlaylist',
+            ),
+          );
+        if (name === 'playlistSaveCurrent') {
+          const result = await service.run(guild, user, 'addToPlaylist', { id: value });
+          return await interaction.editReply(
+            messagePayload(
+              'Música atual salva em **' + safeTitle(result.playlist?.name) + '**.',
+            ),
+          );
+        }
+        if (name === 'repeatToggle') {
+          const state = await service.run(guild, user, 'state');
+          const result = await service.run(guild, user, 'repeat', {
+            enabled: !state.repeat,
+          });
+          return await interaction.editReply(queuePayload(result));
+        }
+        if (['shuffle', 'deduplicate'].includes(name)) {
+          const result = await service.run(guild, user, name);
+          return await interaction.editReply(queuePayload(result));
+        }
         if (name === 'page' || name.startsWith('page:')) {
           const [, type, page] = name.split(':');
           const categories: Record<string, string> = {
@@ -318,6 +440,9 @@ export function createMusicCommands({
             history: 'history',
             favorites: 'favorites',
             remove: 'remove',
+            queueTrack: 'state',
+            playPlaylist: 'playPlaylist',
+            playlistSaveCurrent: 'saveCurrent',
           };
           return await interaction.editReply(
             await choices(
@@ -332,21 +457,21 @@ export function createMusicCommands({
           !value
         )
           return await interaction.editReply(await choices(interaction, action));
-        if (name === 'playlist') {
-          const lists = await service.run(guild, user, 'playlists');
-          const list = (lists.playlists || []).find((item) => item.id === value);
-          if (!list) throw new MusicError(404, 'Playlist não encontrada.');
+        if (name === 'queueTrack' || /^(moveUp|moveDown|queueRemove):/u.test(name)) {
+          const [operation, id] = name.split(':');
+          if (operation === 'queueRemove') {
+            await service.run(guild, user, 'remove', { id });
+            return await interaction.editReply(await choices(interaction, 'state'));
+          }
+          const state =
+            name === 'queueTrack'
+              ? await service.run(guild, user, 'state')
+              : await service.run(guild, user, 'move', {
+                  id,
+                  direction: operation === 'moveUp' ? 'up' : 'down',
+                });
           return await interaction.editReply(
-            messagePayload(
-              `**${safeTitle(list.name)}** · ${safeTitle(list.category)} · ${list.count} música(s)`,
-              [
-                row(
-                  button('Adicionar à fila', 'playlistEnqueue:' + value, 1),
-                  button('Salvar música atual aqui', 'addToPlaylist:' + value),
-                  button('Excluir', 'deleteAsk:' + value, 4),
-                ),
-              ],
-            ),
+            queuePayload(state, { selectedId: name === 'queueTrack' ? value : id }),
           );
         }
         if (name.startsWith('deleteAsk:'))
@@ -354,7 +479,7 @@ export function createMusicCommands({
             messagePayload('Excluir esta playlist para o grupo?', [
               row(
                 button('Confirmar exclusão', 'deletePlaylist:' + name.split(':')[1], 4),
-                button('Cancelar', 'cancel'),
+                button('Cancelar', 'playlistOpen:' + name.split(':')[1]),
               ),
             ]),
           );
@@ -414,6 +539,11 @@ export function createMusicCommands({
           deletePlaylist: 'Playlist excluída.',
           remove: 'Música removida da fila.',
         };
+        if (action === 'deletePlaylist') {
+          const payload = await choices(interaction, 'playlists');
+          payload.content = 'Playlist excluída.\n' + payload.content;
+          return await interaction.editReply(payload);
+        }
         await interaction.editReply(
           messagePayload(messages[action] || 'Música(s) adicionada(s) à fila.'),
         );

@@ -9,3 +9,5 @@ data/
 *.sqlite*
 
 dist/
+.env.*
+!.env.example

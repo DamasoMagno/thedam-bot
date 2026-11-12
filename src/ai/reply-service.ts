@@ -1,6 +1,7 @@
-import { buildAiRequest, extractAiText } from './transport.ts';
+import { createTextModel } from './models.ts';
+import { AiRequestError } from './contracts.ts';
+import type { TextModel, TextUsage } from './contracts.ts';
 import { normalizeText } from '../chat/model.ts';
-import type { ChatStore } from '../chat/store.ts';
 export class AiReplyService {
   private blockedUntil = 0;
   private busy = false;
@@ -13,14 +14,15 @@ export class AiReplyService {
       dailyLimit: number;
       provider?: 'openai' | 'openrouter';
     },
-    privateStore: ChatStore,
+    privateStore: TextUsage,
     privateFetch: typeof fetch = fetch,
     privateRandom: () => number = Math.random,
     privateNow: () => number = Date.now,
+    model?: TextModel,
   ) {
     this.config = privateConfig;
     this.store = privateStore;
-    this.fetch = privateFetch;
+    this.model = model || createTextModel(privateConfig, privateFetch);
     this.random = privateRandom;
     this.now = privateNow;
   }
@@ -31,8 +33,8 @@ export class AiReplyService {
     dailyLimit: number;
     provider?: 'openai' | 'openrouter';
   };
-  private store: ChatStore;
-  private fetch: typeof fetch;
+  private store: TextUsage;
+  private model: TextModel;
   private random: () => number;
   private now: () => number;
   status() {
@@ -64,43 +66,37 @@ export class AiReplyService {
     }
     this.busy = true;
     try {
-      const request = buildAiRequest(
-        this.config,
-        JSON.stringify({
-          contexto: normalizeText(context)?.slice(-500) || 'Conversa de amigos',
-          estilo: ['humor absurdo', 'pergunta inesperada', 'observação divertida'][
-            Math.floor(this.random() * 3)
-          ],
-        }),
-      );
-      if (!request) {
-        this.lastStatus = 'modelo pago bloqueado';
-        return null;
-      }
-      const response = await this.fetch(request.url, {
-        ...request.options,
-        signal: AbortSignal.timeout(
-          this.config.provider === 'openrouter' ? 10000 : 6000,
-        ),
-      });
-      if (!response.ok) {
-        this.lastStatus = [402, 429].includes(response.status)
-          ? 'limite ou saldo da API'
-          : response.status === 401
-            ? 'chave inválida'
-            : 'API indisponível';
-        this.blockedUntil = this.now() + 15 * 60000;
-        return null;
-      }
       const text = normalizeText(
-        extractAiText(this.config.provider || 'openai', await response.json()),
+        await this.model.generate(
+          JSON.stringify({
+            contexto: normalizeText(context)?.slice(-500) || 'Conversa de amigos',
+            estilo: ['humor absurdo', 'pergunta inesperada', 'observação divertida'][
+              Math.floor(this.random() * 3)
+            ],
+          }),
+        ),
       );
       if (!text) return null;
       this.lastStatus = 'pronto';
       return text.length <= 160 ? text : text.slice(0, 157).trimEnd() + '…';
-    } catch {
-      this.lastStatus = 'API indisponível';
-      this.blockedUntil = this.now() + 60000;
+    } catch (error) {
+      this.lastStatus =
+        error instanceof AiRequestError
+          ? error.status === 0
+            ? error.message
+            : [402, 429].includes(error.status)
+              ? 'limite ou saldo da API'
+              : error.status === 401
+                ? 'chave inválida'
+                : 'API indisponível'
+          : 'API indisponível';
+      this.blockedUntil =
+        this.now() +
+        (error instanceof AiRequestError
+          ? error.status === 0
+            ? 0
+            : 15 * 60000
+          : 60000);
       return null;
     } finally {
       this.busy = false;

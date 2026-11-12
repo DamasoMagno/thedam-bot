@@ -41,3 +41,8 @@ test('GIFs variam mesmo com sorteio igual e não repetem os últimos oito', () =
   );
   assert.equal(new Set(urls).size, 9);
 });
+
+test('frequência padrão dos GIFs foi reduzida em trinta por cento', () => {
+  assert.equal(createReplyMediaPicker()({ random: () => 0.2 }), undefined);
+  assert.equal(createReplyMediaPicker()({ random: () => 0.17 }).length, 1);
+});

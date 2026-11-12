@@ -14,6 +14,11 @@ function fixture(run = async () => ({ current: null, queue: [] })) {
   const handler = createMusicCommands({
     client,
     service: {
+      state: () => ({
+        current: { title: 'Atual', provider: 'youtube' },
+        paused: false,
+        queue: [],
+      }),
       run: async (...args) => {
         calls.push(args);
         return run(...args);
@@ -121,22 +126,160 @@ test('comandos são registrados somente no Amigos sem substituir comandos de out
       },
     },
   });
-  assert.equal(commands.length, 7);
+  assert.equal(commands.length, 9);
   assert.ok(commands.every(({ guild }) => guild === MUSIC_GUILD_ID));
 });
 
-test('novos nomes são claros e remover-musica abre a seleção correta', async () => {
+test('comandos musicais usam apenas os atalhos simples, sem versões duplicadas no dam', async () => {
+  const { musicCommands } = await import('../src/music/command-definitions.ts');
+  const root = musicCommands.map((command) => command.name);
+  for (const name of [
+    'musica',
+    'tocar',
+    'playlists',
+    'fila',
+    'pausar',
+    'continuar',
+    'pular',
+    'parar',
+  ])
+    assert.ok(root.includes(name));
+  const nested = musicCommands
+    .find((command) => command.name === 'dam')
+    .options.map((option) => option.name);
+  for (const duplicate of [
+    'tocar',
+    'fila',
+    'painel',
+    'playlists',
+    'criar-playlist',
+    'importar-playlist',
+  ])
+    assert.ok(!nested.includes(duplicate));
+});
+
+test('mover faixa pelos botões atualiza a mesma mensagem privada, sem novos comandos', async () => {
   const f = fixture(async () => ({
     current: { title: 'Atual' },
-    queue: [{ title: 'Próxima', queueId: 'stable-id' }],
+    queue: [{ title: 'Depois', queueId: 'stable-id' }],
   }));
-  f.interaction.commandName = 'dam';
-  f.interaction.options.getSubcommand = () => 'remover-musica';
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isButton = () => true;
+  f.interaction.customId = 'dam:moveUp:stable-id';
+  f.interaction.message = { flags: { has: () => true } };
+  f.interaction.deferUpdate = async () => {
+    f.interaction.deferred = true;
+    f.replies.push({ updated: true });
+  };
   await f.handler.handle(f.interaction);
-  assert.equal(f.calls[0][2], 'state');
+  assert.deepEqual(f.calls[0], [
+    MUSIC_GUILD_ID,
+    'user',
+    'move',
+    { id: 'stable-id', direction: 'up' },
+  ]);
+  assert.equal(f.replies[0].updated, true);
   assert.equal(
-    f.replies.at(-1).components[0].components[0].options[0].value,
-    'stable-id',
+    f.replies
+      .at(-1)
+      .components.flatMap((row) => row.components)
+      .find((item) => item.custom_id?.startsWith('dam:moveUp:')).disabled,
+    true,
   );
+  assert.deepEqual(f.replies.at(-1).allowedMentions.parse, []);
+  f.handler.close();
+});
+
+test('playlist tem formulário para salvar faixas sem iniciar reprodução', async () => {
+  const f = fixture();
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isButton = () => true;
+  f.interaction.customId = 'dam:playlistAdd:my-list';
+  let modal;
+  f.interaction.showModal = async (value) => {
+    modal = value.toJSON();
+  };
+  await f.handler.handle(f.interaction);
+  assert.equal(modal.custom_id, 'dam:playlistInput:my-list');
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.replies.length, 0);
+  f.handler.close();
+});
+test('envio do formulário busca para a biblioteca e não chama enqueue', async () => {
+  const f = fixture(async () => ({
+    tracks: [{ title: 'Queen', token: 'library-token' }],
+  }));
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isModalSubmit = () => true;
+  f.interaction.customId = 'dam:playlistInput:my-list';
+  f.interaction.fields = { getTextInputValue: () => 'Queen' };
+  await f.handler.handle(f.interaction);
+  assert.equal(f.calls[0][2], 'playlistSearch');
+  assert.equal(f.calls[0][3].id, 'my-list');
+  assert.equal(
+    f.replies.at(-1).components[0].components[0].custom_id,
+    'dam:playlistTrack:my-list',
+  );
+  assert.ok(!f.calls.some((call) => call[2] === 'enqueue'));
+  f.handler.close();
+});
+
+test('playlist da call toca com uma seleção sem abrir edição', async () => {
+  const f = fixture(async () => ({ current: { title: 'Música' }, queue: [] }));
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isStringSelectMenu = () => true;
+  f.interaction.customId = 'dam:playPlaylist';
+  f.interaction.values = ['saved-list'];
+  const published = [];
+  f.interaction.channel = {
+    id: 'voice-chat',
+    send: async (payload) => {
+      published.push(payload);
+      return { channelId: 'voice-chat', edit: async () => {} };
+    },
+  };
+  await f.handler.handle(f.interaction);
+  assert.deepEqual(f.calls[0], [
+    MUSIC_GUILD_ID,
+    'user',
+    'playlistEnqueue',
+    { id: 'saved-list' },
+  ]);
+  assert.equal(f.calls.length, 1);
+  assert.equal(published.length, 1);
+  assert.equal(published[0].flags, undefined);
+  assert.match(f.replies.at(-1).content, /adicionada/);
+  f.handler.close();
+});
+test('excluir playlist pede confirmação e o cancelamento volta à lista', async () => {
+  const f = fixture();
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isButton = () => true;
+  f.interaction.customId = 'dam:deleteAsk:list';
+  await f.handler.handle(f.interaction);
+  assert.equal(f.calls.length, 0);
+  const buttons = f.replies.at(-1).components[0].components;
+  assert.equal(buttons[0].custom_id, 'dam:deletePlaylist:list');
+  assert.equal(buttons[1].custom_id, 'dam:playlistOpen:list');
+  f.handler.close();
+});
+test('formulário de playlist reutiliza a mensagem privada sem criar novas respostas', async () => {
+  const f = fixture(async () => ({
+    playlist: { id: 'list', name: 'Rock', tracks: [], revision: 'revision' },
+  }));
+  f.interaction.isChatInputCommand = () => false;
+  f.interaction.isModalSubmit = () => true;
+  f.interaction.isFromMessage = () => true;
+  f.interaction.message = { flags: { has: () => true } };
+  f.interaction.customId = 'dam:libraryInput:createPlaylist';
+  f.interaction.fields = { getTextInputValue: (id) => (id === 'name' ? 'Rock' : '') };
+  f.interaction.deferUpdate = async () => {
+    f.interaction.deferred = true;
+    f.replies.push({ updated: true });
+  };
+  await f.handler.handle(f.interaction);
+  assert.equal(f.replies[0].updated, true);
+  assert.equal(f.calls[0][2], 'createPlaylist');
+  assert.match(f.replies.at(-1).content, /Rock/);
   f.handler.close();
 });
