@@ -80,6 +80,57 @@ A importação é testada automaticamente com respostas simuladas da API. O test
 - Uma falha da **fonte de áudio** permite **uma nova tentativa da mesma música, desde o início**. O painel avisa e a fonte anterior é encerrada. Se falhar novamente, segue para a próxima faixa. Isso não adiciona chamadas de IA. Falhas da conexão de voz continuam seguindo o tratamento do gateway.
 - Pausar é preservado durante a recuperação. Pular ou encerrar cancela a tentativa pendente e libera os processos. Não há download antecipado de toda a fila. Listas Spotify resolvem a primeira faixa antes de iniciar; as demais são preparadas quando chegam à vez, sem aguardar a resolução de toda a lista.
 
+### YouTube exigindo login na VPS
+
+`Sign in to confirm you’re not a bot` significa que o YouTube recusou o acesso anônimo.
+O aviso sobre título ausente é secundário. A mensagem agora aparece explicitamente nos
+comandos/painel, em vez de virar apenas “não foi possível consultar”. Não é possível
+validar a sessão ou garantir liberação de um IP sem testar no servidor afetado.
+
+Há suporte opcional a cookies no formato Netscape. Exporte apenas a sessão YouTube seguindo
+as [instruções do yt-dlp](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies).
+O projeto alerta que usar uma conta no extrator pode levar a restrições da conta. Cookies
+são credenciais: transfira o arquivo por SSH, nunca pelo chat, Git ou suporte público.
+Isso não garante liberação; cookies expirados e restrições do IP podem continuar bloqueando.
+Não alternamos clientes nem adicionamos proxies ou serviços pagos automaticamente.
+
+No diretório do bot na VPS, salve o arquivo em `secrets/youtube-cookies.txt` e ajuste:
+
+```sh
+mkdir -p secrets
+# Após transferir o arquivo privado:
+sudo chown 1000:1000 secrets secrets/youtube-cookies.txt
+sudo chmod 700 secrets
+sudo chmod 600 secrets/youtube-cookies.txt
+```
+
+No `.env`, defina:
+
+```dotenv
+YOUTUBE_COOKIES_FILE=/run/secrets/youtube-cookies.txt
+```
+
+O Compose monta `secrets/` somente para leitura. O bot cria uma cópia temporária privada
+(arquivo 600/diretório 700) para cada processo yt-dlp, pois ele pode atualizar o cookie jar.
+Aplica a sessão tanto à busca/resolução quanto ao download e remove a cópia ao concluir,
+falhar, cancelar ou encerrar a fonte. Nunca grava cookies no banco, na imagem ou nas URLs
+públicas. Sem essa variável, o caminho anônimo continua funcionando como antes.
+
+Após atualizar os arquivos na VPS, reconstrua e recrie o serviço para carregar a variável
+e a nova montagem. Diagnóstico sem entrar em call nem publicar mensagens:
+
+```sh
+docker compose up -d --build music-bot
+docker compose exec -T music-bot node dist/music/diagnose.js
+# Para testar também a obtenção de áudio, use o mesmo vídeo que falhou:
+docker compose exec -T music-bot node dist/music/diagnose.js 'https://youtu.be/pco91kroVgQ'
+```
+
+O comando sem URL confere ferramentas/dependências e leitura do arquivo. Com URL, testa a
+extração e o primeiro áudio PCM, encerrando os processos em seguida. Não verifica se outras
+pessoas ouvem na call. No host com Node/FFmpeg/yt-dlp instalados, o equivalente é
+`npm run diagnose:music -- 'https://youtu.be/pco91kroVgQ'`.
+
 ## Last.fm opcional
 
 Preencha `LASTFM_API_KEY` e `LASTFM_API_SECRET` obtidos em [criar aplicação Last.fm](https://www.last.fm/api/account/create).
@@ -162,7 +213,7 @@ Não exige mínimo de mensagens para tentar gerar; pode reaproveitar frases apre
 - **Menções:** cada pessoa recebe sua resposta em uma fila, com **1 segundo** entre
   respostas. Cada pessoa mantém só um pedido pendente (o mais recente), evitando
   acúmulo ao repetir a menção. O bot referencia a mensagem respondida sem notificar.
-- **Espontâneo:** ligado por padrão, inclusive após a atualização para esta versão. Fala no geral **sem menção, mínimo de pessoas ou quantidade de mensagens**, mesmo quando o chat está parado. Intervalo aleatório de 2–5 minutos no discreto e 2–3 no mais participativo. Mantém apenas um envio pendente; respostas por menção reiniciam a espera. `/dam conversa` → **Só por menção** desliga, e a preferência é preservada nos próximos reinícios. O bot pode não enviar se o corpus não produzir uma frase disponível; falhas não geram loops rápidos.
+- **Espontâneo:** aguarda uma **mensagem de texto nova de uma pessoa no geral**. Agenda no máximo uma resposta, com intervalo aleatório de 2–5 minutos no discreto e 2–3 no participativo. Depois consome essa atividade e fica quieto até alguém falar novamente. Iniciar/reiniciar o bot, carregar o histórico, mensagens de bots/webhooks e mensagens em outros canais não disparam o automático. Uma resposta por menção cancela o envio automático pendente; falhas ou falta de frase disponível também não criam tentativas no silêncio. Não há mínimo de pessoas: uma única pessoa conversando pode ativar uma participação. `/dam conversa` → **Só por menção** desliga o automático, e a preferência é preservada.
 - **Referências e brincadeiras:** o gerador prioriza palavras do assunto atual também presentes em mensagens de dias anteriores, permitindo recombinações entre épocas. Ocasionalmente transforma a frase em uma pergunta absurda, na mesma oportunidade de resposta. Sem novas chamadas à IA.
 - **GIFs:** seleção local por palavras do contexto em 19 categorias (incluindo música/dança, comemoração, surpresa, tristeza, comida e filmes), com sorteio entre 42 reações e fallback aleatório, sem repetir as últimas oito. Em aproximadamente 17,5% das respostas (redução de 30% sobre os 25% anteriores), no máximo um junto da mensagem,
   sem temporizadores ou mensagens extras. O catálogo contém apenas URLs; o bot não baixa os arquivos nem consulta uma API para escolher GIFs durante a conversa. `MARKOV_MEDIA_CHANCE=0` desliga.
@@ -278,6 +329,9 @@ src/
     input-modals.ts          Formulários de música e biblioteca
     spotify-playlists.ts     Leitura paginada de listas Spotify autorizadas
     spotify-connect.ts       Autorização local do administrador
+    youtube-session.ts       Cookies opcionais, cópia privada e limpeza
+    youtube-error.ts         Erros seguros de login, rede e limites
+    diagnose.ts              Verificação de ferramentas/fonte sem entrar na call
     audio-source.ts          yt-dlp → FFmpeg → Discord
     types.ts                 Contratos internos do módulo
   chat/                      Markov, fila de menções, atividade, mídia, votos e dados
@@ -331,7 +385,7 @@ reinícios; as bibliotecas e preferências sim. Após reiniciar, use `/musica` p
 publicar novamente os controles. Nunca rode `docker compose down -v` para atualizar.
 
 Teste em uma call real: duas pessoas, escolha por nome/link, painel visível para todos,
-listas e favoritas, pausa/próxima/parar, mover faixas, outra call impedida de controlar e participação automática mesmo sem novas mensagens. Os testes automatizados não publicam mensagens reais.
+listas e favoritas, pausa/próxima/parar, mover faixas, outra call impedida de controlar e participação automática apenas após mensagens novas no geral. Os testes automatizados não publicam mensagens reais.
 
 ## Trocar o provedor de IA
 
@@ -365,7 +419,7 @@ Base publicada anterior: `71ea984`. Após autorização, a revisão foi aplicada
    A fila vazia aguarda um minuto na call e reaproveita a conexão se houver novo pedido.
 5. **Markov:** aprendizado e respostas restritos ao geral do Amigos; menções entram no
    aprendizado com notificações neutralizadas. Mantidos 5.000 textos/30 dias, mistura
-   contextual/nostalgia e limites de tamanho. Participação sem menção continua com espera
+   contextual/nostalgia e limites de tamanho. Participação sem menção depende de texto humano novo no geral e tem espera
    espaçada; o intervalo não vira resposta a cada mensagem. Catálogo de GIFs mantido e
    chance padrão reduzida de 25% para 17,5% (30% a menos); o ambiente do processo atual não
    foi recarregado. URLs aprendidas no texto podem exibir embeds independentemente disso.
@@ -398,3 +452,14 @@ ao Discord. Após uma implantação futuramente autorizada, ainda devem ser conf
 visibilidade para dois usuários, controle da fila, saída após um minuto, importação Spotify
 autorizada e scrobbles Last.fm pessoais. A voz exige resolver a limitação da conta antes de
 qualquer ativação. A atualização local foi autorizada e aplicada posteriormente; a validação externa de Spotify/Last.fm e a ativação de voz continuam pendentes.
+
+### Validação das correções de VPS
+
+Os **138 testes** passaram, junto de tipos, compilação, formatação e build Docker. O
+relatório de dependências confirmou FFmpeg/Opus, AES-GCM e DAVE na imagem. O diagnóstico
+real do vídeo informado, sem cookies, retornou **403** neste teste; não houve reprodução
+validada com uma sessão autenticada nem teste na VPS do amigo. O suporte de cookies está
+implementado, mas a liberação efetiva depende de credencial válida e do comportamento do
+YouTube naquele IP. Não foram extraídos cookies pessoais ou alterados o bot em execução
+e a VPS. O pacote `www/bot` foi atualizado localmente. A publicação destas correções no GitHub
+foi autorizada posteriormente; o bot continua parado e a VPS não foi alterada nesta etapa.

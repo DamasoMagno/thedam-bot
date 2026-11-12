@@ -10,6 +10,7 @@ services:
       - '127.0.0.1:3031:3031'
     volumes:
       - markov_data:/app/data
+      - ./secrets:/run/secrets:ro
     networks: [music]
     init: true
     stop_grace_period: 15s

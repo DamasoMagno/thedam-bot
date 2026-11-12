@@ -12,3 +12,6 @@ data
 *.sqlite*
 
 dist
+
+secrets/*
+!secrets/.gitkeep

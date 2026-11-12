@@ -747,10 +747,13 @@ export class PlayerService {
         room.error = 'Não foi possível salvar o histórico.';
       }
       room.paused = false;
-      const handleFailure = () => {
+      const handleFailure = (error?: Error) => {
         if (this.rooms.get(guild) !== room || room.current !== track) return;
         room.repeat = false;
-        room.error = 'Não foi possível tocar esta música. Ela foi removida da fila.';
+        room.error =
+          error instanceof MusicError
+            ? error.message
+            : 'Não foi possível tocar esta música. Ela foi removida da fila.';
         void this.advance(guild, room);
       };
       const handleRetry = () => {

@@ -1,3 +1,5 @@
+import { createYoutubeSession } from './youtube-session.ts';
+import { youtubeError } from './youtube-error.ts';
 import { trustedAudioLocation, type AudioLocation } from './audio-location-cache.ts';
 import { Transform } from 'node:stream';
 import type { Track } from './types.ts';
@@ -26,6 +28,7 @@ export function createAudioSource(
     location = trusted;
   }
   const cachedFormat = location?.format;
+  const session = createYoutubeSession(config.youtubeCookiesFile);
   const downloader = spawn(
     config.ytdlp,
     [
@@ -38,6 +41,7 @@ export function createAudioSource(
       '--js-runtimes',
       'node',
       '--no-playlist',
+      ...session.args,
       ...(cachedFormat
         ? ['--load-info-json', '-', '-o', '-']
         : [
@@ -90,17 +94,15 @@ export function createAudioSource(
     lastData = Date.now(),
     received = false,
     failure = 'Não foi possível reproduzir esta música.';
-  const diagnose = (chunk: Buffer) => {
-    const text = chunk.toString().toLowerCase();
-    if (text.includes('sign in') || text.includes('confirm you'))
-      failure = 'O YouTube exigiu verificação para esta música.';
-    else if (text.includes('not available') || text.includes('unavailable'))
-      failure = 'Esta música não está disponível na fonte.';
-    else if (text.includes('timed out') || text.includes('network'))
-      failure = 'A conexão com a fonte de áudio falhou.';
-  };
-  downloader.stderr.on('data', diagnose);
-  encoder.stderr.on('data', diagnose);
+  let downloaderDetails = '';
+  downloader.stderr.on('data', (chunk: Buffer) => {
+    downloaderDetails = (downloaderDetails + chunk.toString()).slice(-8192);
+    failure = youtubeError(downloaderDetails, 'download').message;
+  });
+  encoder.stderr.on('data', (chunk: Buffer) => {
+    if (failure === 'Não foi possível reproduzir esta música.')
+      failure = youtubeError(chunk.toString(), 'download').message;
+  });
   const meter = new Transform({
     transform(chunk, _encoding, callback) {
       if (!received) onReady?.(Math.round(performance.now() - startedAt));
@@ -118,6 +120,7 @@ export function createAudioSource(
     if (stopped) return;
     stopped = true;
     clearInterval(watchdog);
+    session.close();
     downloader.kill('SIGKILL');
     encoder.kill('SIGKILL');
     downloader.stdout.destroy();
@@ -130,8 +133,20 @@ export function createAudioSource(
     stop();
     onError(new MusicError(502, failure));
   }
-  downloader.on('error', fail);
-  encoder.on('error', fail);
+  downloader.on('error', (error) => {
+    failure = youtubeError(
+      String((error as NodeJS.ErrnoException).code),
+      'download',
+    ).message;
+    fail();
+  });
+  encoder.on('error', (error) => {
+    failure = youtubeError(
+      String((error as NodeJS.ErrnoException).code),
+      'download',
+    ).message;
+    fail();
+  });
   downloader.on('close', (code) => {
     if (code && !stopped) fail();
   });

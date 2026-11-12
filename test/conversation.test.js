@@ -137,7 +137,7 @@ test('novas categorias reconhecem música e comida com acentos sem repetir GIFs'
   );
 });
 
-test('automático inicia sem mensagens e a opção de desligar sobrevive ao reinício', async (t) => {
+test('automático aguarda mensagem nova no geral e a opção de desligar sobrevive ao reinício', async (t) => {
   const { mkdtempSync, rmSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { tmpdir } = await import('node:os');
@@ -174,11 +174,56 @@ test('automático inicia sem mensagens e a opção de desligar sobrevive ao rein
   };
   const controller = createChatHandler({ ...options, store });
   assert.equal(controller.status().mode, 'discreet');
+  assert.equal(scheduled.length, 0);
+  for (const message of [
+    {
+      id: 'outside',
+      guildId: 'amigos',
+      channelId: 'outro',
+      content: 'oi',
+      author: { id: 'ana' },
+    },
+    {
+      id: 'bot',
+      guildId: 'amigos',
+      channelId: 'geral',
+      content: 'oi',
+      author: { id: 'bot', bot: true },
+    },
+    {
+      id: 'hook',
+      guildId: 'amigos',
+      channelId: 'geral',
+      content: 'oi',
+      author: { id: 'hook' },
+      webhookId: 'webhook',
+    },
+    {
+      id: 'image',
+      guildId: 'amigos',
+      channelId: 'geral',
+      content: '',
+      author: { id: 'ana' },
+    },
+  ])
+    client.emit('messageCreate', { ...message, channel });
+  await new Promise(setImmediate);
+  assert.equal(scheduled.length, 0);
+  client.emit('messageCreate', {
+    id: 'new',
+    guildId: 'amigos',
+    channelId: 'geral',
+    content: 'o dragão chegou',
+    author: { id: 'ana' },
+    channel,
+  });
+  await new Promise(setImmediate);
   assert.equal(scheduled.length, 1);
   now += 120000;
   scheduled[0]();
   await new Promise(setImmediate);
   assert.equal(sent.length, 1);
+  assert.equal(scheduled.length, 1);
   controller.configure(true, 'mention');
   controller.close();
   scheduled.length = 0;

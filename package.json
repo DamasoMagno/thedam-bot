@@ -15,7 +15,8 @@
     "dev": "node --env-file=.env src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "spotify:connect": "node --env-file=.env src/music/spotify-connect.ts"
+    "spotify:connect": "node --env-file=.env src/music/spotify-connect.ts",
+    "diagnose:music": "node --env-file=.env src/music/diagnose.ts"
   },
   "dependencies": {
     "@discordjs/voice": "0.19.2",

@@ -56,6 +56,7 @@ export function configuration(env = process.env) {
     spotifyId: env.SPOTIFY_CLIENT_ID || '',
     spotifySecret: env.SPOTIFY_CLIENT_SECRET || '',
     spotifyRefreshToken: env.SPOTIFY_REFRESH_TOKEN || '',
+    youtubeCookiesFile: env.YOUTUBE_COOKIES_FILE || '',
     ytdlp: env.YTDLP_PATH || 'yt-dlp',
     ffmpeg: env.FFMPEG_PATH || 'ffmpeg',
     emptyMs: Math.max(1000, Number(env.EMPTY_TIMEOUT_MS) || 60000),

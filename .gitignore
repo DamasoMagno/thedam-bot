@@ -11,3 +11,6 @@ data/
 dist/
 .env.*
 !.env.example
+
+secrets/*
+!secrets/.gitkeep

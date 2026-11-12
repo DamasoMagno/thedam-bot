@@ -25,7 +25,8 @@ export function createActivityTimer({
   let due = 0,
     channel: ChatChannel | undefined,
     busy = false,
-    closed = false;
+    closed = false,
+    hasNewActivity = false;
   let revision = 0;
   function clear() {
     revision++;
@@ -34,7 +35,15 @@ export function createActivityTimer({
     due = 0;
   }
   function arm() {
-    if (closed || busy || !channel || timer !== undefined || !enabled()) return;
+    if (
+      closed ||
+      busy ||
+      !channel ||
+      !hasNewActivity ||
+      timer !== undefined ||
+      !enabled()
+    )
+      return;
     const maximum =
       profile() === 'participative' ? Math.min(maxDelayMs, 180000) : maxDelayMs;
     const delay =
@@ -53,6 +62,7 @@ export function createActivityTimer({
     clear();
     if (closed || busy || !enabled() || !channel) return;
     busy = true;
+    hasNewActivity = false;
     const currentRevision = revision;
     try {
       await speak(channel, () => !closed && enabled() && revision === currentRevision);
@@ -71,17 +81,22 @@ export function createActivityTimer({
     noteActivity(value: ChatChannel, _author: string) {
       if (closed) return;
       channel = value;
-      if (!enabled()) clear();
-      else arm();
+      if (!enabled()) {
+        hasNewActivity = false;
+        clear();
+      } else {
+        hasNewActivity = true;
+        arm();
+      }
     },
     noteReply() {
+      hasNewActivity = false;
       clear();
-      arm();
     },
     tick,
     reset() {
+      hasNewActivity = false;
       clear();
-      arm();
     },
     close() {
       closed = true;

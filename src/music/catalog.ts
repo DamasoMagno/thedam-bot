@@ -1,3 +1,5 @@
+import { createYoutubeSession } from './youtube-session.ts';
+import { youtubeError } from './youtube-error.ts';
 import {
   AudioLocationCache,
   trustedAudioLocation,
@@ -75,9 +77,11 @@ export function parseQuery(value: unknown, provider = 'youtube') {
 export function runExtractor(
   binary: string,
   args: string[],
-  { signal }: { signal?: AbortSignal } = {},
+  { signal, cookiesFile }: { signal?: AbortSignal; cookiesFile?: string } = {},
 ): Promise<ExtractedResult> {
-  return new Promise((resolve, reject) =>
+  signal?.throwIfAborted();
+  const session = createYoutubeSession(cookiesFile);
+  return new Promise<ExtractedResult>((resolve, reject) =>
     execFile(
       binary,
       [
@@ -88,14 +92,14 @@ export function runExtractor(
         '--no-cache-dir',
         '--js-runtimes',
         'node',
+        ...session.args,
         ...args,
       ],
       { timeout: 25000, maxBuffer: 1024 * 1024, windowsHide: true, signal },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
+        if (signal?.aborted) return reject(signal.reason);
         if (error)
-          return reject(
-            new MusicError(502, 'Não foi possível consultar o YouTube agora.'),
-          );
+          return reject(youtubeError(String(stderr).slice(-8192) + ' ' + error.code));
         try {
           resolve(JSON.parse(stdout));
         } catch {
@@ -103,7 +107,7 @@ export function runExtractor(
         }
       },
     ),
-  );
+  ).finally(() => session.close());
 }
 export class Catalog {
   private cache: SearchCache;
@@ -242,7 +246,7 @@ export class Catalog {
         '--',
         target,
       ],
-      { signal },
+      { signal, cookiesFile: this.config.youtubeCookiesFile },
     );
     if (parsed.video && data.id === parsed.video) {
       const location = trustedAudioLocation(data.url, data.http_headers, data);
@@ -276,7 +280,7 @@ export class Catalog {
         '--',
         'https://www.youtube.com/watch?v=' + track.id,
       ],
-      { signal },
+      { signal, cookiesFile: this.config.youtubeCookiesFile },
     );
     signal?.throwIfAborted();
     const location =
